@@ -8,10 +8,10 @@ AI-assisted vendor fraud detection pipeline for Woolworths Group procurement dat
 
 The pipeline is orchestrated by GCP Workflows and runs in three stages:
 
-1. **BigQuery** — SQL pipeline refreshes vendor data, features, triage scores, and case brief inputs
-2. **Cloud Run** — calls Gemini to generate an HTML case brief per high-risk vendor
-3. **Cloud Storage** — stores generated HTML briefs
-4. **Looker Studio** — dashboard for investigators to view vendor risk summaries
+1. **BigQuery**: SQL pipeline refreshes vendor data, features, triage scores, and case brief inputs
+2. **Cloud Run**: calls Gemini to generate an HTML case brief per high-risk vendor
+3. **Cloud Storage**: stores generated HTML briefs
+4. **Looker Studio**: dashboard for investigators to view vendor risk summaries
 
 ## Repo Structure
 
@@ -23,8 +23,6 @@ The pipeline is orchestrated by GCP Workflows and runs in three stages:
 │       ├── employee_attributes.sql
 │       ├── base_transaction.sql
 │       ├── vendor_features.sql
-│       ├── triage_scoring.sql       # TODO — scoring logic being finalised
-│       └── case_brief_inputs.sql    # TODO — depends on triage_scoring
 ├── brief/              # Cloud Run service — generates HTML case briefs via Gemini
 ├── workflows/          # GCP Workflows pipeline definition
 ├── routines/           # Existing risk team P2P control check views (reference only)
@@ -57,14 +55,14 @@ pip install -r requirements.txt
 
 See `.env.example` for the full list. Key variables:
 
-| Variable | Description |
-|---|---|
-| `GCP_PROJECT_ID` | Billing project for BigQuery jobs |
-| `GCP_LOCATION` | GCP region (e.g. `australia-southeast1`) |
-| `BQ_DATASET` | Target BigQuery dataset (e.g. `fraud_dev`) |
-| `CLOUD_RUN_URL` | Deployed Cloud Run service URL |
-| `GEMINI_MODEL` | Gemini model (e.g. `gemini-2.0-flash`) |
-| `GCS_BUCKET` | Cloud Storage bucket for HTML briefs |
+| Variable         | Description                                |
+| ---------------- | ------------------------------------------ |
+| `GCP_PROJECT_ID` | Billing project for BigQuery jobs          |
+| `GCP_LOCATION`   | GCP region (e.g. `australia-southeast1`)   |
+| `BQ_DATASET`     | Target BigQuery dataset (e.g. `fraud_dev`) |
+| `CLOUD_RUN_URL`  | Deployed Cloud Run service URL             |
+| `GEMINI_MODEL`   | Gemini model (e.g. `gemini-2.5-flash`)     |
+| `GCS_BUCKET`     | Cloud Storage bucket for HTML briefs       |
 
 ## Running Locally
 
@@ -119,26 +117,3 @@ python3 test/test_bigquery.py
 # Test Gemini access
 python3 test/test_gemini.py
 ```
-
-## Known Blockers
-
-| Item | Status | Owner |
-|---|---|---|
-| SAP accounting doc (`bkpf_bseg_accounting_doc_v`) | Awaiting access — `gcp-wow-ent-im-tbl-prod` | Enterprise data team |
-| DOA limits (`audit_group_enablement.doa`) | Awaiting access — `gcp-wow-risk-de-data-prod` | Risk team |
-| Workflows service account source dataset access | Awaiting grant on enterprise projects | Risk / enterprise data teams |
-| Triage scoring logic (`triage_scoring.sql`) | Pending — scoring model being finalised | Internal |
-| Case brief inputs (`case_brief_inputs.sql`) | Blocked on triage scoring | Internal |
-| Maximo coverage | Parked — to be confirmed with Gopi | Internal |
-
-## Source Data
-
-The pipeline reads from the following source datasets (read-only):
-
-| Dataset | Project | Contents |
-|---|---|---|
-| `gnfr_published_data_sets` | `gcp-wow-risk-de-lab-dev` | Ariba POs, invoices, approvals, spend base |
-| `adp_dm_masterdata_view` | `gcp-wow-ent-im-tbl-prod` | Vendor master data |
-| `adp_dm_purchasing_view` | `gcp-wow-ent-im-tbl-prod` | SAP purchase orders |
-| `gs_allgrp_fin_data` | `gcp-wow-ent-im-tbl-prod` | SAP payments and invoices *(access pending)* |
-| `audit_group_enablement` | `gcp-wow-risk-de-data-prod` | Delegation of authority limits *(access pending)* |
