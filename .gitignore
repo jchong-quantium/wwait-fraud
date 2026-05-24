@@ -1,0 +1,22 @@
+# Environment
+.env
+
+# Google credentials
+*.json
+service-account*.json
+application_default_credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

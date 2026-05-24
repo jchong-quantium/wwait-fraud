@@ -1,0 +1,91 @@
+services:
+  claude-code:
+    image: ghcr.io/quantium-enterprise/genaicore-claude-code/devcontainer-enterprise:latest
+    container_name: claude-code-container-${PROJECT_NAME:-claude-project}
+    hostname: claude-code
+
+    # Security capabilities for firewall
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Use init to ensure proper process management
+    init: true
+
+    # Environment variables
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=host.docker.internal:0
+      - NODE_OPTIONS=--max-old-space-size=4096 --dns-result-order=ipv4first
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - POWERLEVEL9K_DISABLE_GITSTATUS=true
+      - DEVCONTAINER=true
+      - CLAUDE_CODE_ENABLE_TELEMETRY=1
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://datadog-agent:4317
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_LOG_USER_PROMPTS=1
+      - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - ARTIFACTORY_USERNAME=${ARTIFACTORY_USERNAME}
+      - ARTIFACTORY_TOKEN=${ARTIFACTORY_TOKEN}
+      - REQUIRE_ARTIFACTORY=${REQUIRE_ARTIFACTORY}
+
+    # Volume mounts
+    volumes:
+      # Workspace mount
+      - ..:/workspace:delegated
+      # Persistent storage volumes
+      - claude-code-bashhistory:/commandhistory
+      - claude-code-config:/home/node/.claude
+      - shared-data:/shared
+
+    # Network configuration
+    networks:
+      - devcontainer-network
+
+    depends_on: [datadog-agent]
+
+  datadog-agent:
+    image: ghcr.io/quantium-enterprise/genaicore-claude-code/datadog-agent:latest
+    container_name: datadog-agent-${PROJECT_NAME:-claude-project}
+    pid: host
+    environment:
+      - DD_SITE=us5.datadoghq.com
+      - DD_LOGS_ENABLED=true
+      - DD_OTLP_CONFIG_LOGS_ENABLED=true
+      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT=0.0.0.0:4317
+      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:4318
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+      - DD_PROCESS_AGENT_ENABLED=true
+      - DD_CONTAINER_EXCLUDE=name:datadog-agent
+      - DD_PROCFS_PATH=/proc
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /proc/:/host/proc/:ro
+      - datadog-run:/opt/datadog-agent/run:rw
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    restart: unless-stopped
+    networks:
+      - devcontainer-network
+
+# Networks
+networks:
+  devcontainer-network:
+    driver: bridge
+    name: claude-code-network-${PROJECT_NAME:-claude-project}
+
+# Volumes
+volumes:
+  # Datadog
+  datadog-run:
+    name: claude-code-datadog-${PROJECT_NAME:-claude-project}
+  # Claude Code volumes
+  claude-code-bashhistory:
+    name: claude-code-bashhistory-${PROJECT_NAME:-claude-project}
+  claude-code-config:
+    name: claude-code-config-${PROJECT_NAME:-claude-project}
+  shared-data:
+    name: claude-code-shared-${PROJECT_NAME:-claude-project}
