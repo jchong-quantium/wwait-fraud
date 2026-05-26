@@ -8,6 +8,10 @@
 --         (b) peer-comparison features (L2 supplier category)
 --         (c) time-windowed versions: _3m, _6m, _12m, _24m
 --             (24m = entire base_transaction history)
+--         (d) flag aggregates — count + rate per transaction-pattern
+--             flag (12 flags from base_transaction) per window.
+--             Added 2026-05-22 to give the anomaly model rare-event
+--             signal (W360-pattern features).
 --
 -- Design decisions confirmed 2026-05-19:
 --   - Time anchor:   CURRENT_DATE('Australia/Sydney')
@@ -78,6 +82,19 @@ bt_windowed AS (
     payment_date,
     invoice_amount_excl_tax,
     payment_amount,
+    -- 12 transaction-pattern flags from base_transaction
+    flag_invoice_before_po,
+    flag_invoice_same_day_as_po,
+    flag_approval_after_po,
+    flag_approval_after_invoice,
+    flag_acted_on_behalf_of,
+    flag_weekend_approval,
+    flag_high_value_po,
+    flag_invoice_above_po,
+    flag_round_amount,
+    flag_rejected_invoice,
+    flag_no_contract,
+    flag_blocked_vendor_active,
     -- Window indicators (boolean: is this row in the _Xm window?)
     invoice_date >= DATE_SUB(CURRENT_DATE('Australia/Sydney'), INTERVAL 3 MONTH)  AS in_3m,
     invoice_date >= DATE_SUB(CURRENT_DATE('Australia/Sydney'), INTERVAL 6 MONTH)  AS in_6m,
@@ -171,6 +188,147 @@ raw_po_features AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────
+-- FLAG FEATURES per vendor per window
+-- For each of the 12 transaction-pattern flags from base_transaction
+-- and each of the 4 windows (3m/6m/12m/24m), produce 2 aggregates:
+--   - <flag>_count_<w>  = number of transactions in window where flag = TRUE
+--                         (NULLs in the flag are excluded, not counted as 0)
+--   - <flag>_rate_<w>   = count / total in-window transactions
+--                         SAFE_DIVIDE returns NULL when the denominator is 0
+--
+-- Total: 12 flags × 4 windows × 2 aggregates = 96 new columns.
+-- Peer rank deliberately NOT computed here — we'll add it in v2 for the
+-- flag features that prove informative in the anomaly model.
+-- ─────────────────────────────────────────────────────────────────────
+flag_features AS (
+  SELECT
+    vendor_number,
+
+    -- ============ flag_invoice_before_po ============
+    COUNTIF(in_3m  AND flag_invoice_before_po IS TRUE)                                       AS flag_invoice_before_po_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_invoice_before_po IS TRUE),  COUNTIF(in_3m))          AS flag_invoice_before_po_rate_3m,
+    COUNTIF(in_6m  AND flag_invoice_before_po IS TRUE)                                       AS flag_invoice_before_po_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_invoice_before_po IS TRUE),  COUNTIF(in_6m))          AS flag_invoice_before_po_rate_6m,
+    COUNTIF(in_12m AND flag_invoice_before_po IS TRUE)                                       AS flag_invoice_before_po_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_invoice_before_po IS TRUE),  COUNTIF(in_12m))         AS flag_invoice_before_po_rate_12m,
+    COUNTIF(flag_invoice_before_po IS TRUE)                                                  AS flag_invoice_before_po_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_invoice_before_po IS TRUE),             COUNT(*))                AS flag_invoice_before_po_rate_24m,
+
+    -- ============ flag_invoice_same_day_as_po ============
+    COUNTIF(in_3m  AND flag_invoice_same_day_as_po IS TRUE)                                  AS flag_invoice_same_day_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_invoice_same_day_as_po IS TRUE),  COUNTIF(in_3m))     AS flag_invoice_same_day_rate_3m,
+    COUNTIF(in_6m  AND flag_invoice_same_day_as_po IS TRUE)                                  AS flag_invoice_same_day_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_invoice_same_day_as_po IS TRUE),  COUNTIF(in_6m))     AS flag_invoice_same_day_rate_6m,
+    COUNTIF(in_12m AND flag_invoice_same_day_as_po IS TRUE)                                  AS flag_invoice_same_day_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_invoice_same_day_as_po IS TRUE),  COUNTIF(in_12m))    AS flag_invoice_same_day_rate_12m,
+    COUNTIF(flag_invoice_same_day_as_po IS TRUE)                                             AS flag_invoice_same_day_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_invoice_same_day_as_po IS TRUE),             COUNT(*))           AS flag_invoice_same_day_rate_24m,
+
+    -- ============ flag_approval_after_po ============
+    COUNTIF(in_3m  AND flag_approval_after_po IS TRUE)                                       AS flag_approval_after_po_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_approval_after_po IS TRUE),  COUNTIF(in_3m))          AS flag_approval_after_po_rate_3m,
+    COUNTIF(in_6m  AND flag_approval_after_po IS TRUE)                                       AS flag_approval_after_po_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_approval_after_po IS TRUE),  COUNTIF(in_6m))          AS flag_approval_after_po_rate_6m,
+    COUNTIF(in_12m AND flag_approval_after_po IS TRUE)                                       AS flag_approval_after_po_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_approval_after_po IS TRUE),  COUNTIF(in_12m))         AS flag_approval_after_po_rate_12m,
+    COUNTIF(flag_approval_after_po IS TRUE)                                                  AS flag_approval_after_po_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_approval_after_po IS TRUE),             COUNT(*))                AS flag_approval_after_po_rate_24m,
+
+    -- ============ flag_approval_after_invoice ============
+    COUNTIF(in_3m  AND flag_approval_after_invoice IS TRUE)                                  AS flag_approval_after_invoice_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_approval_after_invoice IS TRUE),  COUNTIF(in_3m))     AS flag_approval_after_invoice_rate_3m,
+    COUNTIF(in_6m  AND flag_approval_after_invoice IS TRUE)                                  AS flag_approval_after_invoice_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_approval_after_invoice IS TRUE),  COUNTIF(in_6m))     AS flag_approval_after_invoice_rate_6m,
+    COUNTIF(in_12m AND flag_approval_after_invoice IS TRUE)                                  AS flag_approval_after_invoice_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_approval_after_invoice IS TRUE),  COUNTIF(in_12m))    AS flag_approval_after_invoice_rate_12m,
+    COUNTIF(flag_approval_after_invoice IS TRUE)                                             AS flag_approval_after_invoice_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_approval_after_invoice IS TRUE),             COUNT(*))           AS flag_approval_after_invoice_rate_24m,
+
+    -- ============ flag_acted_on_behalf_of ============
+    COUNTIF(in_3m  AND flag_acted_on_behalf_of IS TRUE)                                      AS flag_acted_on_behalf_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_acted_on_behalf_of IS TRUE),  COUNTIF(in_3m))         AS flag_acted_on_behalf_rate_3m,
+    COUNTIF(in_6m  AND flag_acted_on_behalf_of IS TRUE)                                      AS flag_acted_on_behalf_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_acted_on_behalf_of IS TRUE),  COUNTIF(in_6m))         AS flag_acted_on_behalf_rate_6m,
+    COUNTIF(in_12m AND flag_acted_on_behalf_of IS TRUE)                                      AS flag_acted_on_behalf_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_acted_on_behalf_of IS TRUE),  COUNTIF(in_12m))        AS flag_acted_on_behalf_rate_12m,
+    COUNTIF(flag_acted_on_behalf_of IS TRUE)                                                 AS flag_acted_on_behalf_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_acted_on_behalf_of IS TRUE),             COUNT(*))               AS flag_acted_on_behalf_rate_24m,
+
+    -- ============ flag_weekend_approval ============
+    COUNTIF(in_3m  AND flag_weekend_approval IS TRUE)                                        AS flag_weekend_approval_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_weekend_approval IS TRUE),  COUNTIF(in_3m))           AS flag_weekend_approval_rate_3m,
+    COUNTIF(in_6m  AND flag_weekend_approval IS TRUE)                                        AS flag_weekend_approval_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_weekend_approval IS TRUE),  COUNTIF(in_6m))           AS flag_weekend_approval_rate_6m,
+    COUNTIF(in_12m AND flag_weekend_approval IS TRUE)                                        AS flag_weekend_approval_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_weekend_approval IS TRUE),  COUNTIF(in_12m))          AS flag_weekend_approval_rate_12m,
+    COUNTIF(flag_weekend_approval IS TRUE)                                                   AS flag_weekend_approval_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_weekend_approval IS TRUE),             COUNT(*))                 AS flag_weekend_approval_rate_24m,
+
+    -- ============ flag_high_value_po ============
+    COUNTIF(in_3m  AND flag_high_value_po IS TRUE)                                           AS flag_high_value_po_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_high_value_po IS TRUE),  COUNTIF(in_3m))              AS flag_high_value_po_rate_3m,
+    COUNTIF(in_6m  AND flag_high_value_po IS TRUE)                                           AS flag_high_value_po_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_high_value_po IS TRUE),  COUNTIF(in_6m))              AS flag_high_value_po_rate_6m,
+    COUNTIF(in_12m AND flag_high_value_po IS TRUE)                                           AS flag_high_value_po_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_high_value_po IS TRUE),  COUNTIF(in_12m))             AS flag_high_value_po_rate_12m,
+    COUNTIF(flag_high_value_po IS TRUE)                                                      AS flag_high_value_po_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_high_value_po IS TRUE),             COUNT(*))                    AS flag_high_value_po_rate_24m,
+
+    -- ============ flag_invoice_above_po ============
+    COUNTIF(in_3m  AND flag_invoice_above_po IS TRUE)                                        AS flag_invoice_above_po_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_invoice_above_po IS TRUE),  COUNTIF(in_3m))           AS flag_invoice_above_po_rate_3m,
+    COUNTIF(in_6m  AND flag_invoice_above_po IS TRUE)                                        AS flag_invoice_above_po_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_invoice_above_po IS TRUE),  COUNTIF(in_6m))           AS flag_invoice_above_po_rate_6m,
+    COUNTIF(in_12m AND flag_invoice_above_po IS TRUE)                                        AS flag_invoice_above_po_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_invoice_above_po IS TRUE),  COUNTIF(in_12m))          AS flag_invoice_above_po_rate_12m,
+    COUNTIF(flag_invoice_above_po IS TRUE)                                                   AS flag_invoice_above_po_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_invoice_above_po IS TRUE),             COUNT(*))                 AS flag_invoice_above_po_rate_24m,
+
+    -- ============ flag_round_amount ============
+    COUNTIF(in_3m  AND flag_round_amount IS TRUE)                                            AS flag_round_amount_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_round_amount IS TRUE),  COUNTIF(in_3m))               AS flag_round_amount_rate_3m,
+    COUNTIF(in_6m  AND flag_round_amount IS TRUE)                                            AS flag_round_amount_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_round_amount IS TRUE),  COUNTIF(in_6m))               AS flag_round_amount_rate_6m,
+    COUNTIF(in_12m AND flag_round_amount IS TRUE)                                            AS flag_round_amount_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_round_amount IS TRUE),  COUNTIF(in_12m))              AS flag_round_amount_rate_12m,
+    COUNTIF(flag_round_amount IS TRUE)                                                       AS flag_round_amount_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_round_amount IS TRUE),             COUNT(*))                     AS flag_round_amount_rate_24m,
+
+    -- ============ flag_rejected_invoice ============
+    COUNTIF(in_3m  AND flag_rejected_invoice IS TRUE)                                        AS flag_rejected_invoice_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_rejected_invoice IS TRUE),  COUNTIF(in_3m))           AS flag_rejected_invoice_rate_3m,
+    COUNTIF(in_6m  AND flag_rejected_invoice IS TRUE)                                        AS flag_rejected_invoice_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_rejected_invoice IS TRUE),  COUNTIF(in_6m))           AS flag_rejected_invoice_rate_6m,
+    COUNTIF(in_12m AND flag_rejected_invoice IS TRUE)                                        AS flag_rejected_invoice_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_rejected_invoice IS TRUE),  COUNTIF(in_12m))          AS flag_rejected_invoice_rate_12m,
+    COUNTIF(flag_rejected_invoice IS TRUE)                                                   AS flag_rejected_invoice_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_rejected_invoice IS TRUE),             COUNT(*))                 AS flag_rejected_invoice_rate_24m,
+
+    -- ============ flag_no_contract ============
+    COUNTIF(in_3m  AND flag_no_contract IS TRUE)                                             AS flag_no_contract_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_no_contract IS TRUE),  COUNTIF(in_3m))                AS flag_no_contract_rate_3m,
+    COUNTIF(in_6m  AND flag_no_contract IS TRUE)                                             AS flag_no_contract_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_no_contract IS TRUE),  COUNTIF(in_6m))                AS flag_no_contract_rate_6m,
+    COUNTIF(in_12m AND flag_no_contract IS TRUE)                                             AS flag_no_contract_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_no_contract IS TRUE),  COUNTIF(in_12m))               AS flag_no_contract_rate_12m,
+    COUNTIF(flag_no_contract IS TRUE)                                                        AS flag_no_contract_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_no_contract IS TRUE),             COUNT(*))                      AS flag_no_contract_rate_24m,
+
+    -- ============ flag_blocked_vendor_active ============
+    COUNTIF(in_3m  AND flag_blocked_vendor_active IS TRUE)                                   AS flag_blocked_vendor_count_3m,
+    SAFE_DIVIDE(COUNTIF(in_3m  AND flag_blocked_vendor_active IS TRUE),  COUNTIF(in_3m))      AS flag_blocked_vendor_rate_3m,
+    COUNTIF(in_6m  AND flag_blocked_vendor_active IS TRUE)                                   AS flag_blocked_vendor_count_6m,
+    SAFE_DIVIDE(COUNTIF(in_6m  AND flag_blocked_vendor_active IS TRUE),  COUNTIF(in_6m))      AS flag_blocked_vendor_rate_6m,
+    COUNTIF(in_12m AND flag_blocked_vendor_active IS TRUE)                                   AS flag_blocked_vendor_count_12m,
+    SAFE_DIVIDE(COUNTIF(in_12m AND flag_blocked_vendor_active IS TRUE),  COUNTIF(in_12m))     AS flag_blocked_vendor_rate_12m,
+    COUNTIF(flag_blocked_vendor_active IS TRUE)                                              AS flag_blocked_vendor_count_24m,
+    SAFE_DIVIDE(COUNTIF(flag_blocked_vendor_active IS TRUE),             COUNT(*))            AS flag_blocked_vendor_rate_24m
+
+  FROM bt_windowed
+  GROUP BY vendor_number
+),
+
+-- ─────────────────────────────────────────────────────────────────────
 -- VENDOR UNIVERSE — distinct vendors present in base_transaction.
 -- (base_transaction has no vendor_name column; name comes from
 -- vendor_attributes / SpendBase.)
@@ -230,11 +388,125 @@ raw AS (
     COALESCE(ri.total_payment_amount_24m,  0) AS total_payment_amount_24m,
     COALESCE(ri.invoice_count_24m,         0) AS invoice_count_24m,
     COALESCE(ri.paid_invoice_count_24m,    0) AS paid_invoice_count_24m,
-    COALESCE(ri.vendor_active_months_24m,  0) AS vendor_active_months_24m
+    COALESCE(ri.vendor_active_months_24m,  0) AS vendor_active_months_24m,
+
+    -- ─── Flag features (96 cols: 12 flags × 4 windows × 2 aggregates) ───
+    -- Counts → COALESCE to 0 (vendor with no rows in window has 0 fires).
+    -- Rates  → COALESCE to NULL (rate is undefined when no rows in window;
+    --                            keeping NULL surfaces this to the model
+    --                            cleanly via imputation).
+    COALESCE(ff.flag_invoice_before_po_count_3m,      0)  AS flag_invoice_before_po_count_3m,
+    ff.flag_invoice_before_po_rate_3m                     AS flag_invoice_before_po_rate_3m,
+    COALESCE(ff.flag_invoice_before_po_count_6m,      0)  AS flag_invoice_before_po_count_6m,
+    ff.flag_invoice_before_po_rate_6m                     AS flag_invoice_before_po_rate_6m,
+    COALESCE(ff.flag_invoice_before_po_count_12m,     0)  AS flag_invoice_before_po_count_12m,
+    ff.flag_invoice_before_po_rate_12m                    AS flag_invoice_before_po_rate_12m,
+    COALESCE(ff.flag_invoice_before_po_count_24m,     0)  AS flag_invoice_before_po_count_24m,
+    ff.flag_invoice_before_po_rate_24m                    AS flag_invoice_before_po_rate_24m,
+
+    COALESCE(ff.flag_invoice_same_day_count_3m,       0)  AS flag_invoice_same_day_count_3m,
+    ff.flag_invoice_same_day_rate_3m                      AS flag_invoice_same_day_rate_3m,
+    COALESCE(ff.flag_invoice_same_day_count_6m,       0)  AS flag_invoice_same_day_count_6m,
+    ff.flag_invoice_same_day_rate_6m                      AS flag_invoice_same_day_rate_6m,
+    COALESCE(ff.flag_invoice_same_day_count_12m,      0)  AS flag_invoice_same_day_count_12m,
+    ff.flag_invoice_same_day_rate_12m                     AS flag_invoice_same_day_rate_12m,
+    COALESCE(ff.flag_invoice_same_day_count_24m,      0)  AS flag_invoice_same_day_count_24m,
+    ff.flag_invoice_same_day_rate_24m                     AS flag_invoice_same_day_rate_24m,
+
+    COALESCE(ff.flag_approval_after_po_count_3m,      0)  AS flag_approval_after_po_count_3m,
+    ff.flag_approval_after_po_rate_3m                     AS flag_approval_after_po_rate_3m,
+    COALESCE(ff.flag_approval_after_po_count_6m,      0)  AS flag_approval_after_po_count_6m,
+    ff.flag_approval_after_po_rate_6m                     AS flag_approval_after_po_rate_6m,
+    COALESCE(ff.flag_approval_after_po_count_12m,     0)  AS flag_approval_after_po_count_12m,
+    ff.flag_approval_after_po_rate_12m                    AS flag_approval_after_po_rate_12m,
+    COALESCE(ff.flag_approval_after_po_count_24m,     0)  AS flag_approval_after_po_count_24m,
+    ff.flag_approval_after_po_rate_24m                    AS flag_approval_after_po_rate_24m,
+
+    COALESCE(ff.flag_approval_after_invoice_count_3m, 0)  AS flag_approval_after_invoice_count_3m,
+    ff.flag_approval_after_invoice_rate_3m                AS flag_approval_after_invoice_rate_3m,
+    COALESCE(ff.flag_approval_after_invoice_count_6m, 0)  AS flag_approval_after_invoice_count_6m,
+    ff.flag_approval_after_invoice_rate_6m                AS flag_approval_after_invoice_rate_6m,
+    COALESCE(ff.flag_approval_after_invoice_count_12m,0)  AS flag_approval_after_invoice_count_12m,
+    ff.flag_approval_after_invoice_rate_12m               AS flag_approval_after_invoice_rate_12m,
+    COALESCE(ff.flag_approval_after_invoice_count_24m,0)  AS flag_approval_after_invoice_count_24m,
+    ff.flag_approval_after_invoice_rate_24m               AS flag_approval_after_invoice_rate_24m,
+
+    COALESCE(ff.flag_acted_on_behalf_count_3m,        0)  AS flag_acted_on_behalf_count_3m,
+    ff.flag_acted_on_behalf_rate_3m                       AS flag_acted_on_behalf_rate_3m,
+    COALESCE(ff.flag_acted_on_behalf_count_6m,        0)  AS flag_acted_on_behalf_count_6m,
+    ff.flag_acted_on_behalf_rate_6m                       AS flag_acted_on_behalf_rate_6m,
+    COALESCE(ff.flag_acted_on_behalf_count_12m,       0)  AS flag_acted_on_behalf_count_12m,
+    ff.flag_acted_on_behalf_rate_12m                      AS flag_acted_on_behalf_rate_12m,
+    COALESCE(ff.flag_acted_on_behalf_count_24m,       0)  AS flag_acted_on_behalf_count_24m,
+    ff.flag_acted_on_behalf_rate_24m                      AS flag_acted_on_behalf_rate_24m,
+
+    COALESCE(ff.flag_weekend_approval_count_3m,       0)  AS flag_weekend_approval_count_3m,
+    ff.flag_weekend_approval_rate_3m                      AS flag_weekend_approval_rate_3m,
+    COALESCE(ff.flag_weekend_approval_count_6m,       0)  AS flag_weekend_approval_count_6m,
+    ff.flag_weekend_approval_rate_6m                      AS flag_weekend_approval_rate_6m,
+    COALESCE(ff.flag_weekend_approval_count_12m,      0)  AS flag_weekend_approval_count_12m,
+    ff.flag_weekend_approval_rate_12m                     AS flag_weekend_approval_rate_12m,
+    COALESCE(ff.flag_weekend_approval_count_24m,      0)  AS flag_weekend_approval_count_24m,
+    ff.flag_weekend_approval_rate_24m                     AS flag_weekend_approval_rate_24m,
+
+    COALESCE(ff.flag_high_value_po_count_3m,          0)  AS flag_high_value_po_count_3m,
+    ff.flag_high_value_po_rate_3m                         AS flag_high_value_po_rate_3m,
+    COALESCE(ff.flag_high_value_po_count_6m,          0)  AS flag_high_value_po_count_6m,
+    ff.flag_high_value_po_rate_6m                         AS flag_high_value_po_rate_6m,
+    COALESCE(ff.flag_high_value_po_count_12m,         0)  AS flag_high_value_po_count_12m,
+    ff.flag_high_value_po_rate_12m                        AS flag_high_value_po_rate_12m,
+    COALESCE(ff.flag_high_value_po_count_24m,         0)  AS flag_high_value_po_count_24m,
+    ff.flag_high_value_po_rate_24m                        AS flag_high_value_po_rate_24m,
+
+    COALESCE(ff.flag_invoice_above_po_count_3m,       0)  AS flag_invoice_above_po_count_3m,
+    ff.flag_invoice_above_po_rate_3m                      AS flag_invoice_above_po_rate_3m,
+    COALESCE(ff.flag_invoice_above_po_count_6m,       0)  AS flag_invoice_above_po_count_6m,
+    ff.flag_invoice_above_po_rate_6m                      AS flag_invoice_above_po_rate_6m,
+    COALESCE(ff.flag_invoice_above_po_count_12m,      0)  AS flag_invoice_above_po_count_12m,
+    ff.flag_invoice_above_po_rate_12m                     AS flag_invoice_above_po_rate_12m,
+    COALESCE(ff.flag_invoice_above_po_count_24m,      0)  AS flag_invoice_above_po_count_24m,
+    ff.flag_invoice_above_po_rate_24m                     AS flag_invoice_above_po_rate_24m,
+
+    COALESCE(ff.flag_round_amount_count_3m,           0)  AS flag_round_amount_count_3m,
+    ff.flag_round_amount_rate_3m                          AS flag_round_amount_rate_3m,
+    COALESCE(ff.flag_round_amount_count_6m,           0)  AS flag_round_amount_count_6m,
+    ff.flag_round_amount_rate_6m                          AS flag_round_amount_rate_6m,
+    COALESCE(ff.flag_round_amount_count_12m,          0)  AS flag_round_amount_count_12m,
+    ff.flag_round_amount_rate_12m                         AS flag_round_amount_rate_12m,
+    COALESCE(ff.flag_round_amount_count_24m,          0)  AS flag_round_amount_count_24m,
+    ff.flag_round_amount_rate_24m                         AS flag_round_amount_rate_24m,
+
+    COALESCE(ff.flag_rejected_invoice_count_3m,       0)  AS flag_rejected_invoice_count_3m,
+    ff.flag_rejected_invoice_rate_3m                      AS flag_rejected_invoice_rate_3m,
+    COALESCE(ff.flag_rejected_invoice_count_6m,       0)  AS flag_rejected_invoice_count_6m,
+    ff.flag_rejected_invoice_rate_6m                      AS flag_rejected_invoice_rate_6m,
+    COALESCE(ff.flag_rejected_invoice_count_12m,      0)  AS flag_rejected_invoice_count_12m,
+    ff.flag_rejected_invoice_rate_12m                     AS flag_rejected_invoice_rate_12m,
+    COALESCE(ff.flag_rejected_invoice_count_24m,      0)  AS flag_rejected_invoice_count_24m,
+    ff.flag_rejected_invoice_rate_24m                     AS flag_rejected_invoice_rate_24m,
+
+    COALESCE(ff.flag_no_contract_count_3m,            0)  AS flag_no_contract_count_3m,
+    ff.flag_no_contract_rate_3m                           AS flag_no_contract_rate_3m,
+    COALESCE(ff.flag_no_contract_count_6m,            0)  AS flag_no_contract_count_6m,
+    ff.flag_no_contract_rate_6m                           AS flag_no_contract_rate_6m,
+    COALESCE(ff.flag_no_contract_count_12m,           0)  AS flag_no_contract_count_12m,
+    ff.flag_no_contract_rate_12m                          AS flag_no_contract_rate_12m,
+    COALESCE(ff.flag_no_contract_count_24m,           0)  AS flag_no_contract_count_24m,
+    ff.flag_no_contract_rate_24m                          AS flag_no_contract_rate_24m,
+
+    COALESCE(ff.flag_blocked_vendor_count_3m,         0)  AS flag_blocked_vendor_count_3m,
+    ff.flag_blocked_vendor_rate_3m                        AS flag_blocked_vendor_rate_3m,
+    COALESCE(ff.flag_blocked_vendor_count_6m,         0)  AS flag_blocked_vendor_count_6m,
+    ff.flag_blocked_vendor_rate_6m                        AS flag_blocked_vendor_rate_6m,
+    COALESCE(ff.flag_blocked_vendor_count_12m,        0)  AS flag_blocked_vendor_count_12m,
+    ff.flag_blocked_vendor_rate_12m                       AS flag_blocked_vendor_rate_12m,
+    COALESCE(ff.flag_blocked_vendor_count_24m,        0)  AS flag_blocked_vendor_count_24m,
+    ff.flag_blocked_vendor_rate_24m                       AS flag_blocked_vendor_rate_24m
   FROM vendor_universe vn
   LEFT JOIN vendor_attributes va USING (vendor_number)
   LEFT JOIN raw_po_features rp   USING (vendor_number)
   LEFT JOIN raw_invoice_features ri USING (vendor_number)
+  LEFT JOIN flag_features ff USING (vendor_number)
 )
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -400,6 +672,71 @@ SELECT
   PERCENTILE_CONT(vendor_active_months_24m, 0.5) OVER (PARTITION BY supplier_category_l2)  AS peer_median_vendor_active_months_24m,
   AVG(vendor_active_months_24m)                  OVER (PARTITION BY supplier_category_l2)  AS peer_mean_vendor_active_months_24m,
   PERCENT_RANK()                                 OVER (PARTITION BY supplier_category_l2 ORDER BY vendor_active_months_24m) AS peer_pct_rank_vendor_active_months_24m,
+
+  -- ─── Flag features (96 cols: passed through from raw, no peer rank in v1) ───
+  -- Counts and rates per flag per window. Naming convention:
+  --   flag_<pattern>_count_<window>
+  --   flag_<pattern>_rate_<window>
+  -- See base_transaction for the flag definitions and W360-pattern origins.
+  flag_invoice_before_po_count_3m,        flag_invoice_before_po_rate_3m,
+  flag_invoice_before_po_count_6m,        flag_invoice_before_po_rate_6m,
+  flag_invoice_before_po_count_12m,       flag_invoice_before_po_rate_12m,
+  flag_invoice_before_po_count_24m,       flag_invoice_before_po_rate_24m,
+
+  flag_invoice_same_day_count_3m,         flag_invoice_same_day_rate_3m,
+  flag_invoice_same_day_count_6m,         flag_invoice_same_day_rate_6m,
+  flag_invoice_same_day_count_12m,        flag_invoice_same_day_rate_12m,
+  flag_invoice_same_day_count_24m,        flag_invoice_same_day_rate_24m,
+
+  flag_approval_after_po_count_3m,        flag_approval_after_po_rate_3m,
+  flag_approval_after_po_count_6m,        flag_approval_after_po_rate_6m,
+  flag_approval_after_po_count_12m,       flag_approval_after_po_rate_12m,
+  flag_approval_after_po_count_24m,       flag_approval_after_po_rate_24m,
+
+  flag_approval_after_invoice_count_3m,   flag_approval_after_invoice_rate_3m,
+  flag_approval_after_invoice_count_6m,   flag_approval_after_invoice_rate_6m,
+  flag_approval_after_invoice_count_12m,  flag_approval_after_invoice_rate_12m,
+  flag_approval_after_invoice_count_24m,  flag_approval_after_invoice_rate_24m,
+
+  flag_acted_on_behalf_count_3m,          flag_acted_on_behalf_rate_3m,
+  flag_acted_on_behalf_count_6m,          flag_acted_on_behalf_rate_6m,
+  flag_acted_on_behalf_count_12m,         flag_acted_on_behalf_rate_12m,
+  flag_acted_on_behalf_count_24m,         flag_acted_on_behalf_rate_24m,
+
+  flag_weekend_approval_count_3m,         flag_weekend_approval_rate_3m,
+  flag_weekend_approval_count_6m,         flag_weekend_approval_rate_6m,
+  flag_weekend_approval_count_12m,        flag_weekend_approval_rate_12m,
+  flag_weekend_approval_count_24m,        flag_weekend_approval_rate_24m,
+
+  flag_high_value_po_count_3m,            flag_high_value_po_rate_3m,
+  flag_high_value_po_count_6m,            flag_high_value_po_rate_6m,
+  flag_high_value_po_count_12m,           flag_high_value_po_rate_12m,
+  flag_high_value_po_count_24m,           flag_high_value_po_rate_24m,
+
+  flag_invoice_above_po_count_3m,         flag_invoice_above_po_rate_3m,
+  flag_invoice_above_po_count_6m,         flag_invoice_above_po_rate_6m,
+  flag_invoice_above_po_count_12m,        flag_invoice_above_po_rate_12m,
+  flag_invoice_above_po_count_24m,        flag_invoice_above_po_rate_24m,
+
+  flag_round_amount_count_3m,             flag_round_amount_rate_3m,
+  flag_round_amount_count_6m,             flag_round_amount_rate_6m,
+  flag_round_amount_count_12m,            flag_round_amount_rate_12m,
+  flag_round_amount_count_24m,            flag_round_amount_rate_24m,
+
+  flag_rejected_invoice_count_3m,         flag_rejected_invoice_rate_3m,
+  flag_rejected_invoice_count_6m,         flag_rejected_invoice_rate_6m,
+  flag_rejected_invoice_count_12m,        flag_rejected_invoice_rate_12m,
+  flag_rejected_invoice_count_24m,        flag_rejected_invoice_rate_24m,
+
+  flag_no_contract_count_3m,              flag_no_contract_rate_3m,
+  flag_no_contract_count_6m,              flag_no_contract_rate_6m,
+  flag_no_contract_count_12m,             flag_no_contract_rate_12m,
+  flag_no_contract_count_24m,             flag_no_contract_rate_24m,
+
+  flag_blocked_vendor_count_3m,           flag_blocked_vendor_rate_3m,
+  flag_blocked_vendor_count_6m,           flag_blocked_vendor_rate_6m,
+  flag_blocked_vendor_count_12m,          flag_blocked_vendor_rate_12m,
+  flag_blocked_vendor_count_24m,          flag_blocked_vendor_rate_24m,
 
   -- ─── Peer-group size for QC (so consumers know if peer stats are reliable) ───
   COUNT(*) OVER (PARTITION BY supplier_category_l2)         AS peer_group_size,

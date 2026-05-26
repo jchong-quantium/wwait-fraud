@@ -30,9 +30,11 @@ WITH
       `gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_PO_Linelevel_v`
         ar_po
     WHERE
-      CAST(Ordered_Date AS date)
-      BETWEEN DATE_SUB(CURRENT_DATE('Australia/Sydney'), INTERVAL 24 MONTH)
-      AND CURRENT_DATE('Australia/Sydney')
+      -- Hard lower bound of 2024-01-01 (was rolling 24-month).
+      -- Project scope is calendar 2024+; the rolling window was silently
+      -- dropping Jan–May 2024 every day. Changed 2026-05 by Chetan.
+      CAST(Ordered_Date AS date) >= DATE '2024-01-01'
+      AND CAST(Ordered_Date AS date) <= CURRENT_DATE('Australia/Sydney')
     GROUP BY
       ar_po.PO_Order_Id, ar_po.req_Requisition_ID, ar_po.Ordered_Date,
       ar_po.Supplier_erp_Id, ar_po.Supplier_erp_name, ar_po.Contract_Id, Title,
@@ -55,9 +57,10 @@ WITH
     FROM
       `gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_POandInvoices_v`
     WHERE
-      po_ordered_date
-      BETWEEN DATE_SUB(CURRENT_DATE('Australia/Sydney'), INTERVAL 24 MONTH)
-      AND CURRENT_DATE('Australia/Sydney')
+      -- Hard lower bound of 2024-01-01 (was rolling 24-month).
+      -- Matches po_data_line_agg above. Changed 2026-05 by Chetan.
+      po_ordered_date >= DATE '2024-01-01'
+      AND po_ordered_date <= CURRENT_DATE('Australia/Sydney')
     GROUP BY
       PO_Order_Id, Invoice_ID, Invoice_date, reconciliation_status,
       invoice_status, contract_id, Paid_Amount_AUD, description
