@@ -37,6 +37,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --image "$IMAGE" \
   --region "$GCP_LOCATION" \
   --no-allow-unauthenticated \
+  --service-account "wwait-fraud@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
   --project "$GCP_PROJECT_ID"
 
 # Print service URL
