@@ -6,16 +6,17 @@
 #   bash scripts/deploy_sql.sh
 
 set -euo pipefail
+# shellcheck source=env.sh
+source "$(dirname "$0")/env.sh"
+: "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in .env}"
+: "${GCS_BUCKET:?GCS_BUCKET must be set in .env}"
 
-# Config 
-PROJECT_ID="gcp-wow-groupit-bizwear-dev"
-BUCKET="fraud-pipeline-dev"
 SQL_DIR="$(dirname "$0")/../sql/pipeline"
 
 # Upload
-echo "Uploading SQL pipeline files to gs://$BUCKET/sql/pipeline/"
-gsutil cp "$SQL_DIR"/*.sql "gs://$BUCKET/sql/pipeline/"
+echo "Uploading SQL pipeline files to gs://$GCS_BUCKET/sql/pipeline/"
+gsutil cp "$SQL_DIR"/*.sql "gs://$GCS_BUCKET/sql/pipeline/"
 
 echo ""
 echo "Done. Files in GCS:"
-gsutil ls "gs://$BUCKET/sql/pipeline/"
+gsutil ls "gs://$GCS_BUCKET/sql/pipeline/"

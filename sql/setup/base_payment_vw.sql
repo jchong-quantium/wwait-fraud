@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW gcp-wow-groupit-bizwear-dev.fraud.base_payment_vw
+CREATE OR REPLACE VIEW ${GCP_PROJECT_ID}.${BQ_DATASET}.base_payment_vw
 AS
 WITH
   vendors AS (
