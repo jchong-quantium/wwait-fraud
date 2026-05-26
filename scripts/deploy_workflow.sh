@@ -10,7 +10,7 @@ source "$(dirname "$0")/env.sh"
 : "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in .env}"
 : "${GCP_LOCATION:?GCP_LOCATION must be set in .env}"
 
-WORKFLOW_NAME="fraud-pipeline"
+WORKFLOW_NAME="wwait-fraud-pipeline"
 WORKFLOW_FILE="$(dirname "$0")/../workflows/pipeline.yaml"
 
 # Deploy
