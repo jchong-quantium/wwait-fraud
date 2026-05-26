@@ -5,11 +5,10 @@
 #   bash scripts/deploy_workflow.sh
 
 set -euo pipefail
-# shellcheck source=env.sh
-source "$(dirname "$0")/env.sh"
-: "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in .env}"
-: "${GCP_LOCATION:?GCP_LOCATION must be set in .env}"
 
+# Config
+PROJECT_ID="gcp-wow-groupit-bizwear-dev" # "agentic-platforms-sandbox"
+REGION="australia-southeast1"
 WORKFLOW_NAME="fraud-pipeline"
 WORKFLOW_FILE="$(dirname "$0")/../workflows/pipeline.yaml"
 
@@ -17,10 +16,10 @@ WORKFLOW_FILE="$(dirname "$0")/../workflows/pipeline.yaml"
 echo "Deploying workflow: $WORKFLOW_NAME"
 gcloud workflows deploy "$WORKFLOW_NAME" \
   --source "$WORKFLOW_FILE" \
-  --location "$GCP_LOCATION" \
-  --project "$GCP_PROJECT_ID"
+  --location "$REGION" \
+  --project "$PROJECT_ID"
 
 echo ""
 echo "Deployed: $WORKFLOW_NAME"
 echo "To execute, run:"
-echo "  gcloud workflows run $WORKFLOW_NAME --location $GCP_LOCATION --project $GCP_PROJECT_ID --data '{\"project_id\": \"$GCP_PROJECT_ID\"}'"
+echo "  gcloud workflows run $WORKFLOW_NAME --location $REGION --project $PROJECT_ID --data '{\"project_id\": \"$PROJECT_ID\"}'"

@@ -44,14 +44,10 @@ load_dotenv()
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 GCP_LOCATION = os.environ.get("GCP_LOCATION")
-BQ_DATASET = os.environ.get("BQ_DATASET")
 CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL")
 
 if not GCP_PROJECT_ID or not GCP_LOCATION:
     sys.exit("ERROR: GCP_PROJECT_ID and GCP_LOCATION must be set in .env")
-
-if not BQ_DATASET:
-    sys.exit("ERROR: BQ_DATASET must be set in .env")
 
 # SQL pipeline files — executed in this order
 # Add new pipeline steps here as they are built.
@@ -66,21 +62,6 @@ SQL_FILES = [
     "base_transaction.sql",
     "vendor_features.sql",
 ]
-
-
-def _apply_sql_vars(sql: str) -> str:
-    """Replace ${VAR} placeholders in SQL with validated env var values.
-
-    Values come from environment variables validated at startup — never user input,
-    so there is no injection risk here.
-    """
-    substitutions = {
-        "${GCP_PROJECT_ID}": GCP_PROJECT_ID,
-        "${BQ_DATASET}": BQ_DATASET,
-    }
-    for placeholder, value in substitutions.items():
-        sql = sql.replace(placeholder, value)
-    return sql
 
 
 def run_sql_step(client: bigquery.Client, sql_file: str) -> None:
@@ -101,7 +82,7 @@ def run_sql_step(client: bigquery.Client, sql_file: str) -> None:
     if not sql_path.exists():
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
 
-    sql = _apply_sql_vars(sql_path.read_text(encoding="utf-8"))
+    sql = sql_path.read_text(encoding="utf-8")
 
     job_config = bigquery.QueryJobConfig()
     job = client.query(sql, job_config=job_config)
@@ -171,7 +152,7 @@ def main() -> None:
     try:
         result = trigger_brief_service(vendor_id="test-vendor-001")
         logger.info("Response: %s", result)
-    except requests.RequestException as e:
+    except requests.HTTPError as e:
         logger.error("Cloud Run error: %s", e)
         sys.exit(1)
 

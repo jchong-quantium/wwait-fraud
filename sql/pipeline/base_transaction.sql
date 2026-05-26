@@ -59,7 +59,7 @@
 --      Monthly — aligned with existing routine refresh cycle
 -- =============================================================================
 
-CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
+CREATE OR REPLACE TABLE `gcp-wow-groupit-bizwear-dev.fraud_dev.base_transaction`
 AS
 
 WITH
@@ -105,7 +105,7 @@ ariba_last_approver AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
--- Source: ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
+-- Source: gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
 -- risk team's dataset. Joins approvals on Requisition_ID.
 --
@@ -181,7 +181,7 @@ ariba_raw AS (
     -- will be populated when SAP branch is added [D1]
     CAST(NULL AS STRING)                                  AS gl_account
 
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw` po
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw` po
   LEFT JOIN ariba_last_approver la
     ON la.Approvable_ID = po.Requisition_ID
   GROUP BY
@@ -223,8 +223,8 @@ FROM ariba_raw
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SAP BRANCH — PENDING [D1]
 -- To be added as UNION ALL once the following views are recreated:
---   ${GCP_PROJECT_ID}.${BQ_DATASET}.base_payment_vw
---   ${GCP_PROJECT_ID}.${BQ_DATASET}.sap_invoices_vw
+--   gcp-wow-groupit-bizwear-dev.fraud.base_payment_vw
+--   gcp-wow-groupit-bizwear-dev.fraud.sap_invoices_vw
 -- Source views depend on:
 --   gcp-wow-ent-im-tbl-prod.gs_allgrp_fin_data.bkpf_bseg_accounting_doc_v
 -- ─────────────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 -- vendor_features — vendor-level rollup of base_transaction
 -- =====================================================================
 --
--- Goal: produce ${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_features
+-- Goal: produce gcp-wow-groupit-bizwear-dev.fraud.vendor_features
 --       with one row per vendor_number, covering:
 --         (a) raw features rolled up from base_transaction
 --         (b) peer-comparison features (L2 supplier category)
@@ -18,7 +18,7 @@
 --                    given window → 0 (not NULL); never-seen vendors
 --                    aren't in the table at all
 --   - Peer groups:   L2 supplier category, all sizes (no min cutoff)
---   - vendor_attributes: joined to ${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_attributes
+--   - vendor_attributes: joined to gcp-wow-groupit-bizwear-dev.fraud.vendor_attributes
 --                        (real table — confirmed 2026-05-19)
 --
 -- Known caveat from base_transaction validation (parked):
@@ -28,7 +28,7 @@
 --   to sum directly because grain is (PO, invoice) — confirmed in Test 2.
 -- =====================================================================
 
-CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_features`
+CREATE OR REPLACE TABLE `gcp-wow-groupit-bizwear-dev.fraud_dev.vendor_features`
 AS
 
 WITH
@@ -45,7 +45,7 @@ vendor_attributes AS (
     supplier_category_l2,
     supplier_category_l3,
     country                                                AS supplier_country
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_attributes`
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.vendor_attributes`
 ),
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ po_dedup AS (
     po_number,
     MIN(po_date)                                           AS po_date,
     MAX(po_spend)                                          AS po_spend
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.base_transaction`
   WHERE vendor_number IS NOT NULL
   GROUP BY vendor_number, po_number
 ),
@@ -84,7 +84,7 @@ bt_windowed AS (
     invoice_date >= DATE_SUB(CURRENT_DATE('Australia/Sydney'), INTERVAL 12 MONTH) AS in_12m,
     -- _24m is the entire base_transaction history; every row qualifies
     TRUE                                                                          AS in_24m
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.base_transaction`
   WHERE vendor_number IS NOT NULL
 ),
 
@@ -177,7 +177,7 @@ raw_po_features AS (
 -- ─────────────────────────────────────────────────────────────────────
 vendor_universe AS (
   SELECT DISTINCT vendor_number
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.base_transaction`
   WHERE vendor_number IS NOT NULL
 ),
 

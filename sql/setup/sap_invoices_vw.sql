@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW ${GCP_PROJECT_ID}.${BQ_DATASET}.sap_invoices_vw
+CREATE OR REPLACE VIEW gcp-wow-groupit-bizwear-dev.fraud.sap_invoices_vw
 AS
 WITH
   vendor AS (

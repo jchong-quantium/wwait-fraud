@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_attributes`
+CREATE OR REPLACE TABLE `gcp-wow-groupit-bizwear-dev.fraud_dev.vendor_attributes`
 AS
 
 -- =============================================================================
