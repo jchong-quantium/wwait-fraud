@@ -1,41 +1,29 @@
 main:
-  params: [args]
   steps:
-    # Step 1: Run BigQuery test query
-    - read_vendor_attributes_sql:
-        call: http.get
-        args:
-          url: ${"https://storage.googleapis.com/" + args.bucket + "/sql/pipeline/vendor_attributes.sql"}
-          auth:
-            type: OAuth2
-        result: vendor_attributes_sql
-
-    - decode_vendor_attributes_sql:
-        assign:
-          - vendor_attributes_sql_string: ${text.decode(vendor_attributes_sql.body)}
-
-    - run_vendor_attributes:
+    # Step 1: Run placeholder BQ query (SELECT 1) — confirms SA has BQ job submission rights.
+    # Replace with vendor_attributes.sql once SA has dataViewer on source datasets.
+    - run_bq_placeholder:
         call: http.post
         args:
-          url: ${"https://bigquery.googleapis.com/bigquery/v2/projects/" + args.project_id + "/jobs"}
+          url: "https://bigquery.googleapis.com/bigquery/v2/projects/agentic-platforms-sandbox/jobs"
           auth:
             type: OAuth2
           body:
             jobReference:
-              projectId: ${args.project_id}
-              location: ${args.location}
+              projectId: "agentic-platforms-sandbox"
+              location: "australia-southeast1"
             configuration:
               query:
-                query: ${vendor_attributes_sql_string}
+                query: "SELECT 1"
                 useLegacySql: false
-                location: ${args.location}
+                location: "australia-southeast1"
         result: bq_job_response
 
     # Step 2: Wait for BigQuery job to complete
     - wait_for_bq:
         call: http.get
         args:
-          url: ${"https://bigquery.googleapis.com/bigquery/v2/projects/" + args.project_id + "/jobs/" + bq_job_response.body.jobReference.jobId + "?location=" + args.location}
+          url: ${"https://bigquery.googleapis.com/bigquery/v2/projects/agentic-platforms-sandbox/jobs/" + bq_job_response.body.jobReference.jobId + "?location=australia-southeast1"}
           auth:
             type: OAuth2
         result: bq_job_status
@@ -44,10 +32,11 @@ main:
     - call_brief_service:
         call: http.post
         args:
-          # url: https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate
-          url: https://fraud-case-brief-385749165110.australia-southeast1.run.app/generate
+          url: "https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate"
           auth:
             type: OIDC
+          headers:
+            Content-Type: "application/json"
           body:
             vendor_id: "test-vendor-001"
         result: brief_response
