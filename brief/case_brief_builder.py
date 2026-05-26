@@ -49,7 +49,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from dotenv import load_dotenv
 from google import genai  # google-genai — Vertex AI / Gemini SDK
-from google.cloud import bigquery
+from google.cloud import bigquery, storage
 from google.cloud.exceptions import GoogleCloudError, NotFound
 
 # ── Logging — structured format for Cloud Run compatibility ───────────────────
@@ -68,6 +68,9 @@ BQ_DATASET     = os.environ.get("BQ_DATASET")
 GCP_LOCATION   = os.environ.get("GCP_LOCATION", "us-central1")
 BQ_LOCATION    = os.environ.get("BQ_LOCATION", "US")
 GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GCS_BUCKET     = os.environ.get("GCS_BUCKET")
+# GCS may be in a different GCP project — defaults to GCP_PROJECT_ID if not set
+GCS_PROJECT_ID = os.environ.get("GCS_PROJECT_ID") or GCP_PROJECT_ID
 
 MELBOURNE_TZ      = ZoneInfo("Australia/Melbourne")
 PIPELINE_VERSION  = "1.0.0"
@@ -967,6 +970,42 @@ def generate_case_brief_html(vendor_json: dict) -> str:
     return response.text
 
 
+def upload_html_to_gcs(html: str, vendor_number: str, timestamp: str) -> str:
+    """Upload a case brief HTML string to Cloud Storage.
+
+    Uses ADC — no credentials hardcoded (CWE-798).
+    Bucket name and project come from GCS_BUCKET / GCS_PROJECT_ID env vars.
+
+    Args:
+        html:          HTML content to upload.
+        vendor_number: Used to construct the GCS object name.
+        timestamp:     ISO-style timestamp string (e.g. "20260526T143000").
+
+    Returns:
+        gs:// URI of the uploaded object.
+
+    Raises:
+        EnvironmentError: if GCS_BUCKET is not set.
+        google.cloud.exceptions.GoogleCloudError: on upload failure.
+    """
+    if not GCS_BUCKET:
+        raise EnvironmentError(
+            "GCS_BUCKET must be set in .env to upload case briefs to Cloud Storage."
+        )
+
+    gcs_client = storage.Client(project=GCS_PROJECT_ID)
+    bucket     = gcs_client.bucket(GCS_BUCKET)
+    # Store under briefs/<vendor_number>/ prefix for easy querying
+    blob_name  = f"briefs/{vendor_number}/case_brief_{vendor_number}_{timestamp}.html"
+    blob       = bucket.blob(blob_name)
+
+    blob.upload_from_string(html, content_type="text/html; charset=utf-8")
+
+    uri = f"gs://{GCS_BUCKET}/{blob_name}"
+    logger.info("Case brief uploaded to %s", uri)
+    return uri
+
+
 def build_and_generate(vendor_number: str, tier: str | None = None) -> str:
     """End-to-end: build case brief JSON then generate HTML investigation report.
 
@@ -1027,9 +1066,24 @@ if __name__ == "__main__":
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)
 
-    # Generate HTML via Gemini and save
+    # Save JSON so it can be pasted directly into the Gem
+    json_path = output_dir / f"case_brief_{target_vendor}_{ts}.json"
+    json_path.write_text(json.dumps(brief, indent=2, default=str), encoding="utf-8")
+    logger.info("Case brief JSON saved to %s", json_path)
+
+    # Generate HTML via Gemini and save locally
     logger.info("Generating HTML report via Gemini...")
     html      = generate_case_brief_html(brief)
     html_path = output_dir / f"case_brief_{target_vendor}_{ts}.html"
     html_path.write_text(html, encoding="utf-8")
     logger.info("Case brief HTML saved to %s", html_path)
+
+    # Upload to Cloud Storage if GCS_BUCKET is configured
+    if GCS_BUCKET:
+        try:
+            gcs_uri = upload_html_to_gcs(html, target_vendor, ts)
+            logger.info("Uploaded to %s", gcs_uri)
+        except (EnvironmentError, GoogleCloudError) as exc:
+            logger.warning("GCS upload failed (local file still saved): %s", exc)
+    else:
+        logger.info("GCS_BUCKET not set — skipping Cloud Storage upload")
