@@ -18,6 +18,7 @@ echo "Deploying workflow: $WORKFLOW_NAME"
 gcloud workflows deploy "$WORKFLOW_NAME" \
   --source "$WORKFLOW_FILE" \
   --location "$GCP_LOCATION" \
+  --service-account "wwait-fraud@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
   --project "$GCP_PROJECT_ID"
 
 echo ""
