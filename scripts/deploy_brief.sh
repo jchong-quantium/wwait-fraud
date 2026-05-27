@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # Config 
-PROJECT_ID="gcp-wow-groupit-bizwear-dev" # "agentic-platforms-sandbox"
+PROJECT_ID="agentic-platforms-sandbox"
 REGION="australia-southeast1"
 SERVICE_NAME="fraud-case-brief"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$SERVICE_NAME/$SERVICE_NAME"

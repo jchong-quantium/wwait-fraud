@@ -44,8 +44,7 @@ main:
     - call_brief_service:
         call: http.post
         args:
-          # url: https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate
-          url: https://fraud-case-brief-385749165110.australia-southeast1.run.app/generate
+          url: https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate
           auth:
             type: OIDC
           body:
