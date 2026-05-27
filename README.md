@@ -39,6 +39,18 @@ The pipeline is orchestrated by GCP Workflows and runs in three stages:
 - Python 3.11+
 - Docker (for Cloud Run builds)
 
+### Installing gcloud in the Claude Code Container
+
+If using the Claude Code devcontainer, install the gcloud CLI using the Debian package:
+
+```bash
+sudo apt-get update
+sudo apt-get install ca-certificates gnupg curl
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update && sudo apt-get install google-cloud-cli
+```
+
 ## Setup
 
 ```bash
