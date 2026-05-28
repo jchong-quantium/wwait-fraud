@@ -104,6 +104,37 @@ ariba_last_approver AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- BUSINESS UNIT LOOKUP
+-- Source: gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_GNFR_SpendBaseTable_v
+-- Deduplicates to one Business_div per PO_Document + Vendor_ID by picking the
+-- most frequently occurring value. Excludes rows where PO_Document is NULL or empty.
+-- Join key: po_number = PO_Document AND vendor_number = Vendor_ID
+-- ─────────────────────────────────────────────────────────────────────────────
+
+business_unit_lookup AS (
+  SELECT
+    PO_Document,
+    Vendor_ID,
+    Business_div
+  FROM (
+    SELECT
+      PO_Document,
+      Vendor_ID,
+      Business_div,
+      COUNT(*)                                              AS cnt,
+      ROW_NUMBER() OVER (
+        PARTITION BY PO_Document, Vendor_ID
+        ORDER BY COUNT(*) DESC
+      )                                                     AS rn
+    FROM `gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_GNFR_SpendBaseTable_v`
+    WHERE PO_Document IS NOT NULL
+      AND PO_Document <> ''
+    GROUP BY PO_Document, Vendor_ID, Business_div
+  )
+  WHERE rn = 1
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
 -- Source: ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
@@ -184,6 +215,9 @@ ariba_raw AS (
   FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw` po
   LEFT JOIN ariba_last_approver la
     ON la.Approvable_ID = po.Requisition_ID
+  LEFT JOIN business_unit_lookup bu
+    ON bu.PO_Document = po.PO_Number
+    AND bu.Vendor_ID = po.Vendor_Number
   GROUP BY
     po.PO_Number,
     po.Invoice_ID,
@@ -201,7 +235,8 @@ ariba_raw AS (
     la.approval_date,
     la.approved_by_user,
     la.nominated_approver,
-    la.acted_on_behalf_of
+    la.acted_on_behalf_of,
+    bu.Business_div
 )
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +252,8 @@ SELECT
     'Ariba'
   )                                                       AS transaction_id,
   'Ariba'                                                 AS system,
-  *
+  *,
+  CAST(Business_div AS STRING)                            AS business_unit
 FROM ariba_raw
 
 -- ─────────────────────────────────────────────────────────────────────────────
