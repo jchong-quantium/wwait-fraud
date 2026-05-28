@@ -59,7 +59,7 @@
 --      Monthly — aligned with existing routine refresh cycle
 -- =============================================================================
 
-CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
+CREATE OR REPLACE TABLE `gcp-wow-groupit-bizwear-dev.fraud_dev.base_transaction`
 AS
 
 WITH
@@ -104,8 +104,27 @@ ariba_last_approver AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- DOA LOOKUP [D2]
+-- Source: gcp-wow-risk-de-lab-dev.audit_group_enablement.doa
+-- Deduplicates by UPPER(Employee_Name) — names appearing more than once are
+-- excluded to avoid ambiguous DOA limit assignment.
+-- Join key: UPPER(Employee_Name) = approved_by_user (approved_by_user is
+-- already upper-cased in Silver_Ariba_Approvals_v)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+doa_unique AS (
+  SELECT
+    UPPER(Employee_Name)                                        AS approved_by_user_upper,
+    MAX(CAST(General_Authority_Limits___Annual_Limit__ AS FLOAT64)) AS approver_doa_annual_limit
+  FROM `gcp-wow-risk-de-lab-dev.audit_group_enablement.doa`
+  WHERE Employee_Name IS NOT NULL
+  GROUP BY UPPER(Employee_Name)
+  HAVING COUNT(*) = 1
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
--- Source: ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
+-- Source: gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
 -- risk team's dataset. Joins approvals on Requisition_ID.
 --
@@ -144,9 +163,9 @@ ariba_raw AS (
 
     po.Approver                                           AS approver_last,
 
-    -- [L4] approver_doa_annual_limit NULL — requires audit_group_enablement.doa
-    -- in gcp-wow-risk-de-data-prod, access pending [D2]
-    CAST(NULL AS FLOAT64)                                 AS approver_doa_annual_limit,
+    -- [D2] approver_doa_annual_limit — joined from doa_unique CTE
+    -- NULL when approved_by_user is absent from DOA table or has duplicate entries
+    MAX(doa.approver_doa_annual_limit)                    AS approver_doa_annual_limit,
 
     po.Requestor                                          AS requestor,
     po.invoice_status,
@@ -181,9 +200,11 @@ ariba_raw AS (
     -- will be populated when SAP branch is added [D1]
     CAST(NULL AS STRING)                                  AS gl_account
 
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw` po
+  FROM `gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw` po
   LEFT JOIN ariba_last_approver la
     ON la.Approvable_ID = po.Requisition_ID
+  LEFT JOIN doa_unique doa
+    ON doa.approved_by_user_upper = la.approved_by_user
   GROUP BY
     po.PO_Number,
     po.Invoice_ID,
@@ -217,14 +238,18 @@ SELECT
     'Ariba'
   )                                                       AS transaction_id,
   'Ariba'                                                 AS system,
-  *
+  *,
+  SAFE_DIVIDE(po_spend, CAST(invoice_amount_excl_tax AS FLOAT64)) AS po_to_invoice_ratio,
+  SAFE_DIVIDE(po_spend, CAST(payment_amount AS FLOAT64))          AS po_to_payment_ratio,
+  SAFE_DIVIDE(po_spend, approver_doa_annual_limit)                AS po_to_doa_ratio,
+  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days
 FROM ariba_raw
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SAP BRANCH — PENDING [D1]
 -- To be added as UNION ALL once the following views are recreated:
---   ${GCP_PROJECT_ID}.${BQ_DATASET}.base_payment_vw
---   ${GCP_PROJECT_ID}.${BQ_DATASET}.sap_invoices_vw
+--   gcp-wow-groupit-bizwear-dev.fraud.base_payment_vw
+--   gcp-wow-groupit-bizwear-dev.fraud.sap_invoices_vw
 -- Source views depend on:
 --   gcp-wow-ent-im-tbl-prod.gs_allgrp_fin_data.bkpf_bseg_accounting_doc_v
 -- ─────────────────────────────────────────────────────────────────────────────
