@@ -123,6 +123,24 @@ doa_unique AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- PO LINE LEVEL AGGREGATES
+-- Source: gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_PO_Linelevel_v
+-- Aggregated to PO grain by po_order_id.
+-- Join key: po_number = po_order_id
+-- ─────────────────────────────────────────────────────────────────────────────
+
+po_line_level AS (
+  SELECT
+    po_order_id,
+    COUNT(*)                                                    AS po_line_item_count,
+    COUNT(CASE WHEN sum_amount_invoiced > 0 THEN 1 END)         AS invoiced_line_item_count,
+    CAST(SUM(sum_po_spend) AS FLOAT64)                          AS total_po_spend_line_level,
+    CAST(SUM(sum_amount_invoiced) AS FLOAT64)                   AS total_invoiced_line_level
+  FROM `gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_PO_Linelevel_v`
+  GROUP BY po_order_id
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
 -- Source: gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
@@ -205,6 +223,8 @@ ariba_raw AS (
     ON la.Approvable_ID = po.Requisition_ID
   LEFT JOIN doa_unique doa
     ON doa.approved_by_user_upper = la.approved_by_user
+  LEFT JOIN po_line_level pll
+    ON pll.po_order_id = po.PO_Number
   GROUP BY
     po.PO_Number,
     po.Invoice_ID,
@@ -222,7 +242,11 @@ ariba_raw AS (
     la.approval_date,
     la.approved_by_user,
     la.nominated_approver,
-    la.acted_on_behalf_of
+    la.acted_on_behalf_of,
+    pll.po_line_item_count,
+    pll.invoiced_line_item_count,
+    pll.total_po_spend_line_level,
+    pll.total_invoiced_line_level
 )
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +266,11 @@ SELECT
   SAFE_DIVIDE(po_spend, CAST(invoice_amount_excl_tax AS FLOAT64)) AS po_to_invoice_ratio,
   SAFE_DIVIDE(po_spend, CAST(payment_amount AS FLOAT64))          AS po_to_payment_ratio,
   SAFE_DIVIDE(po_spend, approver_doa_annual_limit)                AS po_to_doa_ratio,
-  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days
+  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days,
+  CAST(po_line_item_count AS INT64)                               AS po_line_item_count,
+  CAST(invoiced_line_item_count AS INT64)                         AS invoiced_line_item_count,
+  total_po_spend_line_level,
+  total_invoiced_line_level
 FROM ariba_raw
 
 -- ─────────────────────────────────────────────────────────────────────────────
