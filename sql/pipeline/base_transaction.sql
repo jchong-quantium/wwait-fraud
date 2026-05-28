@@ -23,8 +23,14 @@
 -- [L1] Ariba branch is at PO + Invoice grain after deduplication in ariba_raw.
 --      The source view (ariba_po_invoice_vw) is at PO + cost_centre + invoice +
 --      description grain. ariba_raw re-aggregates to PO + invoice using SUM for
---      additive fields and MAX for header-level fields. Cost centre is NULLed
---      when multiple distinct values exist per PO + invoice.
+--      truly-additive fields and MAX for header-level broadcast fields.
+--      Cost centre is NULLed when multiple distinct values exist per PO + invoice.
+--
+--      IMPORTANT: PO_Spend is a PO-HEADER broadcast value (repeated across every
+--      cost-centre/invoice/description row of the same PO), NOT an additive
+--      line-level field. So we use MAX(PO_Spend), not SUM. Validated 2026-05 by
+--      cross-checking SUM(po_spend) per vendor against source — SUM produced
+--      200%–17,000% inflation; MAX matches source within ~5%.
 --
 -- [L2] payment_date is NULL for all Ariba rows — payment events live in SAP
 --      (bkpf_bseg_accounting_doc_v). Will be populated when SAP branch is added.
@@ -50,6 +56,26 @@
 --      against a contract rather than a PO and have no PO reference to join on.
 --      Estimated materiality to be confirmed with Gopi.
 --
+-- TRANSACTION-PATTERN FLAGS (added 2026-05):
+-- [F1] 12 boolean flag columns at transaction grain, encoding known fraud-
+--      signal patterns from (a) existing WW routines (e.g. invoices_before_po,
+--      sap_payment_blocked_vendor), (b) W360 historical findings (DOA bypass,
+--      retro-billing, inflated hours), (c) validation findings during EDA.
+--      Each flag is one CASE expression; logic and origin documented inline
+--      in the ariba_with_flags CTE below.
+--
+-- [F2] flag_blocked_vendor_active requires a vendor_status lookup. This is
+--      computed once in vendor_status_lookup CTE and joined on vendor_number.
+--      vendor_attributes is the source (it exposes VendorStatus from
+--      dim_vendor_v with values A/B/C/NULL).
+--
+-- [F3] Flag value semantics:
+--        TRUE  = pattern fires
+--        FALSE = pattern does not fire
+--        NULL  = cannot evaluate (e.g. missing date field)
+--      Downstream aggregations must treat NULL as "not counted" — use
+--      COUNTIF(flag IS TRUE), not COUNTIF(flag).
+--
 -- GRAIN:
 --      Ariba branch: one row per PO + Invoice
 --      SAP branch (pending): one row per SAP document + invoice
@@ -63,6 +89,24 @@ CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
 AS
 
 WITH
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- VENDOR STATUS LOOKUP [F2]
+-- Used by flag_blocked_vendor_active. Joined to ariba_raw on vendor_number.
+-- Status semantics (from sap_payment_blocked_vendor_vw, the canonical
+-- routine):
+--   'A'       = active
+--   'B'       = payment block
+--   'C'       = procurement block
+--   NULL / '' = no status set ("No Response")
+-- ─────────────────────────────────────────────────────────────────────────────
+
+vendor_status_lookup AS (
+  SELECT
+    vendor_number,
+    vendor_status
+  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_attributes`
+),
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA APPROVALS
@@ -142,6 +186,11 @@ ariba_raw AS (
     -- will be populated when SAP branch is added [D1]
     CAST(NULL AS DATE)                                    AS po_last_modified_date,
 
+    -- approver_last: legacy field from ariba_po_invoice_vw which itself
+    -- sources from Requester_Manager_L1. EDA confirmed this column is
+    -- 100% "GORDON CAIRNS" (retired chairman) — i.e. unusable. Kept here
+    -- for backwards-compatibility; downstream features should rely on
+    -- nominated_approver / approved_by_user instead.
     po.Approver                                           AS approver_last,
 
     -- [L4] approver_doa_annual_limit NULL — requires audit_group_enablement.doa
@@ -159,8 +208,8 @@ ariba_raw AS (
     la.acted_on_behalf_of,
 
     -- amounts — aggregated to PO + invoice grain [L1]
-    SUM(po.PO_Spend)                                      AS po_spend,
-    SUM(po.amount_invoiced)                               AS invoice_amount_excl_tax,
+    MAX(po.PO_Spend)                                      AS po_spend,                  -- MAX, not SUM: PO_Spend is a PO-header broadcast value (see [L1])
+    SUM(po.amount_invoiced)                               AS invoice_amount_excl_tax,   -- SUM is correct: amount_invoiced is line-additive
     MAX(po.Amount_Paid)                                   AS payment_amount,
     MAX(po.amount_paid_excl_tax)                          AS amount_paid_excl_tax,
     SUM(po.tax_paid)                                      AS tax_amount,
@@ -202,6 +251,170 @@ ariba_raw AS (
     la.approved_by_user,
     la.nominated_approver,
     la.acted_on_behalf_of
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ARIBA WITH FLAGS [F1]
+-- Adds 12 boolean transaction-pattern flag columns to ariba_raw. Each flag
+-- encodes a known fraud-signal pattern. Logic is one CASE expression per
+-- flag with inline comments documenting:
+--   (a) the pattern in plain English
+--   (b) the source routine or W360 case it derives from
+--   (c) any reliability caveats
+--
+-- See [F1]–[F3] in the header for flag-layer semantics.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+ariba_with_flags AS (
+  SELECT
+    bt.*,
+
+    -- ============ DATE-ORDERING FLAGS ============
+
+    -- flag_invoice_before_po
+    -- Pattern: invoice issued before its matching PO was raised.
+    -- Source: ariba_invoices_before_po_vw (WHERE Invoice_Date <= PO_Date)
+    -- W360 link: 2024 audit found 183 vendors / 122 staff / $7.4M flagged.
+    -- EDA fire rate: ~21% of rows.
+    CASE
+      WHEN bt.invoice_date IS NULL OR bt.po_date IS NULL THEN NULL
+      WHEN bt.invoice_date < bt.po_date THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_invoice_before_po,
+
+    -- flag_invoice_same_day_as_po
+    -- Pattern: invoice issued on the same day as the PO.
+    -- Origin: W360 retro-billing pattern (no dedicated routine).
+    -- EDA fire rate: ~2.7%.
+    CASE
+      WHEN bt.invoice_date IS NULL OR bt.po_date IS NULL THEN NULL
+      WHEN bt.invoice_date = bt.po_date THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_invoice_same_day_as_po,
+
+    -- flag_approval_after_po
+    -- Pattern: approval action recorded AFTER the PO was raised.
+    -- EDA fire rate: ~80% (very common — captures "last workflow action
+    -- on the requisition" semantic rather than retro-approval).
+    -- Likely too common to be discriminative; carry through for now and
+    -- evaluate in the model. Drop if uninformative.
+    CASE
+      WHEN bt.approval_date IS NULL OR bt.po_date IS NULL THEN NULL
+      WHEN bt.approval_date > bt.po_date THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_approval_after_po,
+
+    -- flag_approval_after_invoice
+    -- Pattern: approval action recorded AFTER the invoice was issued.
+    -- W360 link: 2024 audit "Invoices submitted before work orders".
+    -- EDA fire rate: ~20%.
+    CASE
+      WHEN bt.approval_date IS NULL OR bt.invoice_date IS NULL THEN NULL
+      WHEN bt.approval_date > bt.invoice_date THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_approval_after_invoice,
+
+    -- ============ APPROVAL-PATTERN FLAGS ============
+
+    -- flag_acted_on_behalf_of
+    -- Pattern: nominee != actor in the last approval step (delegation).
+    -- Origin: already present as acted_on_behalf_of; lift for consistency.
+    -- EDA fire rate: ~5.6%.
+    CASE
+      WHEN bt.acted_on_behalf_of IS NULL THEN NULL
+      WHEN bt.acted_on_behalf_of = TRUE THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_acted_on_behalf_of,
+
+    -- flag_weekend_approval
+    -- Pattern: approval action recorded on Saturday or Sunday.
+    -- Origin: Tony's "out-of-hours approval" ask from kickoff meetings.
+    -- BigQuery DAYOFWEEK: 1=Sun, 2=Mon, ..., 7=Sat.
+    -- Caveat: approval_date is DATE (lost time-of-day); for hour-of-day
+    -- signal, source from Silver_Ariba_Approvals_v.Action_Date (TIMESTAMP).
+    CASE
+      WHEN bt.approval_date IS NULL THEN NULL
+      WHEN EXTRACT(DAYOFWEEK FROM bt.approval_date) IN (1, 7) THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_weekend_approval,
+
+    -- ============ AMOUNT / VALUE FLAGS ============
+
+    -- flag_high_value_po
+    -- Pattern: PO above $50k threshold (split-PO routine logic).
+    -- Threshold chosen to match ariba_split_po_under_threshold_vw —
+    -- POs over $50k can't be "split to bypass DOA" in the way smaller
+    -- ones can. Useful as a "high-attention" marker.
+    CASE
+      WHEN bt.po_spend IS NULL THEN NULL
+      WHEN bt.po_spend > 50000 THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_high_value_po,
+
+    -- flag_invoice_above_po
+    -- Pattern: invoice amount exceeds PO amount by more than 5%.
+    -- Source: ariba_invoices_not_matching_po_vw (loosened from
+    -- HAVING ABS-diff>0 to >5% to avoid GST/rounding noise).
+    -- W360 link: Operation Hoth — "excessive part markups (~30% vs 13%)".
+    CASE
+      WHEN bt.invoice_amount_excl_tax IS NULL OR bt.po_spend IS NULL
+        OR bt.po_spend = 0 THEN NULL
+      WHEN bt.invoice_amount_excl_tax > bt.po_spend * 1.05 THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_invoice_above_po,
+
+    -- flag_round_amount
+    -- Pattern: payment amount is an exact multiple of $100 AND > $1,000.
+    -- Origin: W360 inflation patterns — fabricated invoices often use
+    -- round numbers; legitimate ones reflect itemised pricing.
+    -- Caveat: fires on many legitimate flat-fee invoices; useful only
+    -- as part of an ensemble.
+    CASE
+      WHEN bt.payment_amount IS NULL THEN NULL
+      WHEN bt.payment_amount > 1000
+        AND MOD(CAST(bt.payment_amount AS INT64), 100) = 0 THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_round_amount,
+
+    -- ============ STATUS / GOVERNANCE FLAGS ============
+
+    -- flag_rejected_invoice
+    -- Pattern: invoice in 'Rejected' status.
+    -- A single rejected invoice isn't fraud, but a vendor with many
+    -- rejections across time is worth attention.
+    CASE
+      WHEN bt.invoice_status IS NULL THEN NULL
+      WHEN bt.invoice_status = 'Rejected' THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_rejected_invoice,
+
+    -- flag_no_contract
+    -- Pattern: PO has no contract_id (governance gap).
+    -- Caveat: EDA found contract_id is rarely NULL on base_transaction
+    -- but few distinct values, suggesting a placeholder pattern. Verify
+    -- on first run and tighten if needed.
+    CASE
+      WHEN bt.contract_id IS NULL OR bt.contract_id = '' THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_no_contract,
+
+    -- flag_blocked_vendor_active [F2]
+    -- Pattern: transaction belongs to a vendor whose current vendor_status
+    -- is not 'A' (active). Includes B, C, and empty/NULL ("No Response").
+    -- Source: sap_payment_blocked_vendor_vw — same filter.
+    -- Caveat: vendor_status is point-in-time. A vendor blocked today
+    -- may have transacted legitimately when active. For time-accurate
+    -- assessment, join DateLastChanged from dim_vendor_v (future work).
+    CASE
+      WHEN vsl.vendor_number IS NULL THEN NULL   -- vendor not in master
+      WHEN vsl.vendor_status IS NULL OR vsl.vendor_status = '' THEN TRUE
+      WHEN vsl.vendor_status <> 'A' THEN TRUE
+      ELSE FALSE
+    END                                                   AS flag_blocked_vendor_active
+
+  FROM ariba_raw bt
+  LEFT JOIN vendor_status_lookup vsl
+    ON bt.vendor_number = vsl.vendor_number
 )
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +431,7 @@ SELECT
   )                                                       AS transaction_id,
   'Ariba'                                                 AS system,
   *
-FROM ariba_raw
+FROM ariba_with_flags
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SAP BRANCH — PENDING [D1]
