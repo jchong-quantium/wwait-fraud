@@ -11,11 +11,7 @@
 --      invoice_amount_excl_tax (SAP), gl_account, SAP branch entirely
 --      Status: BLOCKED — awaiting gcp-wow-ent-im-tbl-prod project access
 --
--- [D2] gcp-wow-risk-de-data-prod.audit_group_enablement.doa
---      Needed for: approver_doa_annual_limit
---      Status: BLOCKED — awaiting gcp-wow-risk-de-data-prod project access
---
--- [D3] gcp-wow-fac-de-data-prod.maximo.PO / COMPANIES / PERSON
+-- [D2] gcp-wow-fac-de-data-prod.maximo.PO / COMPANIES / PERSON
 --      Needed for: Maximo branch of base_transaction
 --      Status: PARKED — Maximo coverage to be confirmed with Gopi before building
 --
@@ -33,11 +29,7 @@
 --      in Silver_Ariba_PO_Linelevel_v. Available in SAP via DocumentLastChangedOn
 --      in document_schedule_lines_v. Will be populated when SAP branch is added.
 --
--- [L4] approver_doa_annual_limit is NULL for all rows — requires
---      audit_group_enablement.doa which is in gcp-wow-risk-de-data-prod.
---      See [D2] above.
---
--- [L5] gl_account is NULL for all Ariba rows — GL account is assigned at SAP
+-- [L4] gl_account is NULL for all Ariba rows — GL account is assigned at SAP
 --      posting time, not in Ariba. Will be populated when SAP branch is added.
 --
 -- [L6] payment_terms_description and payment_terms_days have been omitted
@@ -104,6 +96,43 @@ ariba_last_approver AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- DOA LOOKUP
+-- Source: gcp-wow-risk-de-lab-dev.audit_group_enablement.doa
+-- Deduplicates by UPPER(Employee_Name) — names appearing more than once are
+-- excluded to avoid ambiguous DOA limit assignment.
+-- Join key: UPPER(Employee_Name) = approved_by_user (approved_by_user is
+-- already upper-cased in Silver_Ariba_Approvals_v)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+doa_unique AS (
+  SELECT
+    UPPER(Employee_Name)                                        AS approved_by_user_upper,
+    MAX(CAST(General_Authority_Limits___Annual_Limit__ AS FLOAT64)) AS approver_doa_annual_limit
+  FROM `gcp-wow-risk-de-lab-dev.audit_group_enablement.doa`
+  WHERE Employee_Name IS NOT NULL
+  GROUP BY UPPER(Employee_Name)
+  HAVING COUNT(*) = 1
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PO LINE LEVEL AGGREGATES
+-- Source: gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_PO_Linelevel_v
+-- Aggregated to PO grain by po_order_id.
+-- Join key: po_number = po_order_id
+-- ─────────────────────────────────────────────────────────────────────────────
+
+po_line_level AS (
+  SELECT
+    po_order_id,
+    COUNT(*)                                                    AS po_line_item_count,
+    COUNT(CASE WHEN sum_amount_invoiced > 0 THEN 1 END)         AS invoiced_line_item_count,
+    CAST(SUM(sum_po_spend) AS FLOAT64)                          AS total_po_spend_line_level,
+    CAST(SUM(sum_amount_invoiced) AS FLOAT64)                   AS total_invoiced_line_level
+  FROM `gcp-wow-risk-de-lab-dev.gnfr_published_data_sets.Silver_Ariba_PO_Linelevel_v`
+  GROUP BY po_order_id
+),
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
 -- Source: ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
@@ -144,9 +173,9 @@ ariba_raw AS (
 
     po.Approver                                           AS approver_last,
 
-    -- [L4] approver_doa_annual_limit NULL — requires audit_group_enablement.doa
-    -- in gcp-wow-risk-de-data-prod, access pending [D2]
-    CAST(NULL AS FLOAT64)                                 AS approver_doa_annual_limit,
+    -- approver_doa_annual_limit — joined from doa_unique CTE
+    -- NULL when approved_by_user is absent from DOA table or has duplicate entries
+    MAX(doa.approver_doa_annual_limit)                    AS approver_doa_annual_limit,
 
     po.Requestor                                          AS requestor,
     po.invoice_status,
@@ -177,13 +206,22 @@ ariba_raw AS (
       ELSE NULL
     END                                                   AS cost_centre,
 
-    -- [L5] gl_account NULL — assigned at SAP posting time, not in Ariba
+    -- [L4] gl_account NULL — assigned at SAP posting time, not in Ariba
     -- will be populated when SAP branch is added [D1]
-    CAST(NULL AS STRING)                                  AS gl_account
+    CAST(NULL AS STRING)                                  AS gl_account,
+
+    pll.po_line_item_count,
+    pll.invoiced_line_item_count,
+    pll.total_po_spend_line_level,
+    pll.total_invoiced_line_level
 
   FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw` po
   LEFT JOIN ariba_last_approver la
     ON la.Approvable_ID = po.Requisition_ID
+  LEFT JOIN doa_unique doa
+    ON doa.approved_by_user_upper = la.approved_by_user
+  LEFT JOIN po_line_level pll
+    ON pll.po_order_id = po.PO_Number
   GROUP BY
     po.PO_Number,
     po.Invoice_ID,
@@ -201,7 +239,11 @@ ariba_raw AS (
     la.approval_date,
     la.approved_by_user,
     la.nominated_approver,
-    la.acted_on_behalf_of
+    la.acted_on_behalf_of,
+    pll.po_line_item_count,
+    pll.invoiced_line_item_count,
+    pll.total_po_spend_line_level,
+    pll.total_invoiced_line_level
 )
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +259,11 @@ SELECT
     'Ariba'
   )                                                       AS transaction_id,
   'Ariba'                                                 AS system,
-  *
+  *,
+  SAFE_DIVIDE(po_spend, CAST(invoice_amount_excl_tax AS FLOAT64)) AS po_to_invoice_ratio,
+  SAFE_DIVIDE(po_spend, CAST(payment_amount AS FLOAT64))          AS po_to_payment_ratio,
+  SAFE_DIVIDE(po_spend, approver_doa_annual_limit)                AS po_to_doa_ratio,
+  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days
 FROM ariba_raw
 
 -- ─────────────────────────────────────────────────────────────────────────────
