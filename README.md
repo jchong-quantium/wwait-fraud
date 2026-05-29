@@ -68,23 +68,24 @@ pip install -r requirements.txt
 
 See `.env.example` for the full list. Key variables:
 
-| Variable         | Description                              |
-| ---------------- | ---------------------------------------- |
-| `GCP_PROJECT_ID` | Billing project for BigQuery jobs        |
-| `GCP_LOCATION`   | GCP region (e.g. `australia-southeast1`) |
-| `BQ_DATASET`     | Target BigQuery dataset (e.g. `fraud`)   |
-| `CLOUD_RUN_URL`  | Deployed Cloud Run service URL           |
-| `GCS_BUCKET`     | Cloud Storage bucket for SQL pipeline files and generated HTML briefs |
+| Variable         | Description                                                              |
+| ---------------- | ------------------------------------------------------------------------ |
+| `GCP_PROJECT_ID` | Billing project for BigQuery jobs                                        |
+| `GCP_LOCATION`   | GCP region required for deployment scripts only, not the pipeline runner |
+| `BQ_DATASET`     | Target BigQuery dataset                                                  |
+| `CLOUD_RUN_URL`  | Deployed Cloud Run service URL                                           |
+| `GCS_BUCKET`     | Cloud Storage bucket for SQL pipeline files and generated HTML briefs    |
 
 ## Running Locally
 
 Use `run_pipeline.py` to run the full pipeline with your personal ADC credentials. This is the development path while Workflows service account access to enterprise source datasets is being provisioned.
 
 ```bash
-python3 scripts/run_pipeline.py
+python3 scripts/run_pipeline.py            # setup views + pipeline SQL + brief trigger
+python3 scripts/run_pipeline.py --sql-only # setup views + pipeline SQL only
 ```
 
-This runs each SQL file in `sql/pipeline/` in sequence, then triggers the Cloud Run brief generation service.
+Setup views (`sql/setup/`) always run first and are skipped gracefully if source dataset access is unavailable (e.g. BSEG). Pipeline tables (`sql/pipeline/`) follow in dependency order. Empty SQL files are skipped with a warning.
 
 ## Deployment
 
