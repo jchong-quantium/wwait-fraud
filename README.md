@@ -8,21 +8,22 @@ AI-assisted vendor fraud detection pipeline for Woolworths Group procurement dat
 
 The pipeline is orchestrated by GCP Workflows and runs in three stages:
 
-1. **BigQuery**: SQL pipeline refreshes vendor data, features, triage scores, and case brief inputs
-2. **Cloud Run**: calls Gemini to generate an HTML case brief per high-risk vendor
-3. **Cloud Storage**: stores generated HTML briefs
-4. **Looker Studio**: dashboard for investigators to view vendor risk summaries
+1. **BigQuery:** SQL pipeline refreshes vendor data, features, triage scores, and case brief inputs
+2. **Cloud Run:** calls Gemini to generate an HTML case brief per high-risk vendor
+3. **Cloud Storage:** stores generated HTML briefs
+4. **Looker Studio:** dashboard for investigators to view vendor risk summaries
 
 ## Repo Structure
 
 ```
 ├── sql/
-│   ├── views/          # Input views over source datasets (Ariba, SAP)
+│   ├── setup/          # Input views over source datasets (Ariba, SAP)
 │   └── pipeline/       # BigQuery pipeline tables — run in this order:
+│       ├── base_transaction.sql
 │       ├── vendor_attributes.sql
 │       ├── employee_attributes.sql
-│       ├── base_transaction.sql
 │       ├── vendor_features.sql
+│       ├── employee_features.sql
 ├── brief/              # Cloud Run service — generates HTML case briefs via Gemini
 ├── workflows/          # GCP Workflows pipeline definition
 ├── routines/           # Existing risk team P2P control check views (reference only)
@@ -33,10 +34,22 @@ The pipeline is orchestrated by GCP Workflows and runs in three stages:
 
 ## Prerequisites
 
-- GCP project: `agentic-platforms-sandbox` (Gemini/Workflows) and `gcp-wow-groupit-bizwear-dev` (BigQuery)
+- GCP project: `agentic-platforms-sandbox`
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) authenticated
 - Python 3.11+
 - Docker (for Cloud Run builds)
+
+### Installing gcloud in the Claude Code Container
+
+If using the Claude Code devcontainer, install the gcloud CLI using the Debian package:
+
+```bash
+sudo apt-get update
+sudo apt-get install ca-certificates gnupg curl
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update && sudo apt-get install google-cloud-cli
+```
 
 ## Setup
 
@@ -55,14 +68,13 @@ pip install -r requirements.txt
 
 See `.env.example` for the full list. Key variables:
 
-| Variable         | Description                                |
-| ---------------- | ------------------------------------------ |
-| `GCP_PROJECT_ID` | Billing project for BigQuery jobs          |
-| `GCP_LOCATION`   | GCP region (e.g. `australia-southeast1`)   |
-| `BQ_DATASET`     | Target BigQuery dataset (e.g. `fraud_dev`) |
-| `CLOUD_RUN_URL`  | Deployed Cloud Run service URL             |
-| `GEMINI_MODEL`   | Gemini model (e.g. `gemini-2.5-flash`)     |
-| `GCS_BUCKET`     | Cloud Storage bucket for HTML briefs       |
+| Variable         | Description                              |
+| ---------------- | ---------------------------------------- |
+| `GCP_PROJECT_ID` | Billing project for BigQuery jobs        |
+| `GCP_LOCATION`   | GCP region (e.g. `australia-southeast1`) |
+| `BQ_DATASET`     | Target BigQuery dataset (e.g. `fraud`)   |
+| `CLOUD_RUN_URL`  | Deployed Cloud Run service URL           |
+| `GCS_BUCKET`     | Cloud Storage bucket for SQL pipeline files and generated HTML briefs |
 
 ## Running Locally
 
@@ -98,15 +110,7 @@ bash scripts/deploy_workflow.sh
 
 ### Execute Workflow (console)
 
-Go to **GCP Console → Workflows → fraud-pipeline → Execute** with:
-
-```json
-{
-  "project_id": "gcp-wow-groupit-bizwear-dev",
-  "bucket": "fraud-pipeline-dev",
-  "location": "australia-southeast1"
-}
-```
+Go to **GCP Console / Workflows / wwait-fraud-pipeline / Execute** with no input arguments (project, location, and Cloud Run URL are hardcoded in the workflow).
 
 ## Testing Connectivity
 

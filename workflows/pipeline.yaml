@@ -1,58 +1,66 @@
 main:
-  params: [args]
   steps:
-    # Step 1: Run BigQuery test query
-    - read_vendor_attributes_sql:
-        call: http.get
+    # Step 1: Submit BigQuery job.
+    # Placeholder: SELECT 1 confirms the SA has BQ job submission rights.
+    # Replace with the full SQL pipeline steps once SA has dataViewer on source datasets.
+    - run_bq_placeholder:
+        call: googleapis.bigquery.v2.jobs.insert
         args:
-          url: ${"https://storage.googleapis.com/" + args.bucket + "/sql/pipeline/vendor_attributes.sql"}
-          auth:
-            type: OAuth2
-        result: vendor_attributes_sql
-
-    - decode_vendor_attributes_sql:
-        assign:
-          - vendor_attributes_sql_string: ${text.decode(vendor_attributes_sql.body)}
-
-    - run_vendor_attributes:
-        call: http.post
-        args:
-          url: ${"https://bigquery.googleapis.com/bigquery/v2/projects/" + args.project_id + "/jobs"}
-          auth:
-            type: OAuth2
+          projectId: "agentic-platforms-sandbox"
           body:
             jobReference:
-              projectId: ${args.project_id}
-              location: ${args.location}
+              projectId: "agentic-platforms-sandbox"
+              location: "australia-southeast1"
             configuration:
               query:
-                query: ${vendor_attributes_sql_string}
+                query: "SELECT 1"
                 useLegacySql: false
-                location: ${args.location}
+                location: "australia-southeast1"
         result: bq_job_response
 
-    # Step 2: Wait for BigQuery job to complete
-    - wait_for_bq:
-        call: http.get
-        args:
-          url: ${"https://bigquery.googleapis.com/bigquery/v2/projects/" + args.project_id + "/jobs/" + bq_job_response.body.jobReference.jobId + "?location=" + args.location}
-          auth:
-            type: OAuth2
-        result: bq_job_status
+    # Step 2: Wait for the BQ job using the native connector.
+    # getQueryResults blocks up to timeoutMs (3 min) server-side before returning.
+    # If the job is not done within 3 min, jobComplete is false and we retry --
+    # no sleep needed. BQ errors surface as Workflows exceptions automatically.
+    - poll_bq_job:
+        steps:
+          - check_bq_status:
+              call: googleapis.bigquery.v2.jobs.getQueryResults
+              args:
+                projectId: "agentic-platforms-sandbox"
+                jobId: ${bq_job_response.jobReference.jobId}
+                location: "australia-southeast1"
+                timeoutMs: 180000
+              result: bq_job_status
+          - evaluate_bq_status:
+              switch:
+                - condition: ${bq_job_status.jobComplete == true}
+                  next: generate_briefs_parallel
+                - condition: true
+                  next: check_bq_status
 
-    # Step 3: Call Cloud Run brief generation service
-    - call_brief_service:
-        call: http.post
-        args:
-          url: https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate
-          auth:
-            type: OIDC
-          body:
-            vendor_id: "test-vendor-001"
-        result: brief_response
+    # Step 3: Fan out brief generation. One Cloud Run call per vendor, in parallel.
+    # Replace the in: list with a BQ query result once case_brief_inputs table exists.
+    - generate_briefs_parallel:
+        parallel:
+          for:
+            value: vendor_id
+            in: ["test-vendor-001", "test-vendor-002", "test-vendor-003"]
+            steps:
+              - call_brief_service:
+                  call: http.post
+                  args:
+                    url: "https://fraud-case-brief-747682583836.australia-southeast1.run.app/generate"
+                    auth:
+                      type: OIDC
+                    headers:
+                      Content-Type: "application/json"
+                    body:
+                      vendor_id: ${vendor_id}
+                  result: brief_response
 
-    # Step 4: Return results
+    # Step 4: Return summary
     - return_results:
         return:
-          bq_status: ${bq_job_status.body.status.state}
-          brief_status: ${brief_response.body.status}
+          bq_status: ${bq_job_status.jobComplete}
+          brief_status: "parallel fan-out complete"
