@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw
+CREATE OR REPLACE VIEW ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
 AS
 WITH
   vendors AS (

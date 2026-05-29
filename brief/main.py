@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request
 from google.cloud.exceptions import GoogleCloudError
 
-from case_brief_builder import (
+from builder import (
     build_case_brief,
     generate_case_brief_html,
     upload_html_to_gcs,
@@ -68,13 +68,13 @@ def generate():
 
     except EnvironmentError as exc:
         logger.error("Configuration error: %s", exc)
-        return jsonify({"error": "Service misconfigured", "detail": str(exc)}), 500
+        return jsonify({"error": "Service misconfigured"}), 500
     except GoogleCloudError as exc:
         logger.error("GCP error for vendor %s: %s", vendor_id, exc)
-        return jsonify({"error": "GCP error", "detail": str(exc)}), 502
+        return jsonify({"error": "GCP error"}), 502
     except Exception as exc:  # noqa: BLE001 — catch-all for unexpected errors
         logger.exception("Unexpected error for vendor %s", vendor_id)
-        return jsonify({"error": "Internal error", "detail": str(exc)}), 500
+        return jsonify({"error": "Internal error"}), 500
 
     return jsonify({
         "status":     "ok",

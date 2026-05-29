@@ -1,5 +1,5 @@
 """
-case_brief_builder.py — AI Case Brief assembler for fraud investigation triage.
+builder.py — AI Case Brief assembler for fraud investigation triage.
 
 Assembles a structured 7-block JSON case brief per vendor from four BigQuery
 pipeline tables, then optionally generates a 5-section HTML investigation report
@@ -15,13 +15,13 @@ Data sources (all in {GCP_PROJECT_ID}.{BQ_DATASET}):
 
 Usage:
     # CLI — builds brief for vendor with most transactions and saves JSON
-    python3 brief/case_brief_builder.py
+    python3 brief/builder.py
 
     # CLI — specific vendor
-    python3 brief/case_brief_builder.py <vendor_number>
+    python3 brief/builder.py <vendor_number>
 
     # Programmatic
-    from brief.case_brief_builder import build_case_brief, build_and_generate
+    from brief.builder import build_case_brief, build_and_generate
     brief = build_case_brief("V12345", tier="1")
     html  = build_and_generate("V12345", tier="1")
 
@@ -49,6 +49,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from dotenv import load_dotenv
 from google import genai  # google-genai — Vertex AI / Gemini SDK
+from google.genai.types import HttpOptions
 from google.cloud import bigquery, storage
 from google.cloud.exceptions import GoogleCloudError, NotFound
 
@@ -175,13 +176,20 @@ def _contains_blocked_pattern(value: Any) -> bool:
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
-def load_vendor_data(vendor_number: str) -> dict[str, pd.DataFrame]:
+def load_vendor_data(
+    vendor_number: str,
+    client: bigquery.Client | None = None,
+) -> dict[str, pd.DataFrame]:
     """Load all four pipeline tables for a single vendor.
 
     vendor_features, vendor_attributes, and base_transaction are filtered to
     the given vendor_number via parameterised queries (CWE-89).
     employee_attributes is loaded in full — it is a small reference table used
     for cross-vendor bank-detail matching.
+
+    Args:
+        vendor_number: BigQuery STRING key identifying the vendor.
+        client: optional pre-existing BigQuery client; one is created if absent.
 
     Returns:
         Dict with keys: vendor_features, vendor_attributes,
@@ -198,7 +206,8 @@ def load_vendor_data(vendor_number: str) -> dict[str, pd.DataFrame]:
         )
     vn = vendor_number.strip()
 
-    client = _bq_client()
+    if client is None:
+        client = _bq_client()
     results: dict[str, pd.DataFrame] = {}
 
     # Parameterised queries — prevent SQL injection (CWE-89)
@@ -805,7 +814,8 @@ def build_case_brief(vendor_number: str, tier: str | None = None) -> dict:
     vn = vendor_number.strip()
     logger.info("Building case brief for vendor %s (tier=%s)", vn, tier)
 
-    data = load_vendor_data(vn)
+    client = _bq_client()
+    data = load_vendor_data(vn, client=client)
     va   = data["vendor_attributes"]
     vf   = data["vendor_features"]
     bt   = data["base_transaction"]
@@ -817,7 +827,6 @@ def build_case_brief(vendor_number: str, tier: str | None = None) -> dict:
     sibling_vf = pd.DataFrame()
     supplier_id = _col(va, "supplier_id")
     if supplier_id:
-        client     = _bq_client()
         sibling_va, sibling_vf = _load_sibling_vendor_data(supplier_id, client)
 
     # Derive data window from invoice_date range in base_transaction
@@ -839,7 +848,7 @@ def build_case_brief(vendor_number: str, tier: str | None = None) -> dict:
         "anomaly_scores":    build_anomaly_scores(vf),
         "routine_hits":      build_routine_hits(),
         "binary_flags":      build_binary_flags(bt, va, emp),
-        "exposure":          build_exposure(vf, va, sibling_vf=sibling_vf if not sibling_vf.empty else None),
+        "exposure":          build_exposure(vf, va, sibling_vf=sibling_vf),
         "top_transactions":  build_top_transactions(bt),
         "related_vendors":   build_related_vendors(
             vn, va, sibling_va, sibling_vf, tier=tier
@@ -880,37 +889,46 @@ def build_batch(
     return briefs
 
 
-# ── LLM integration — Gemini via Vertex AI ────────────────────────────────────
+# LLM integration — Gemini via Vertex AI 
+
+# Cached at first call — prompt files are static at deploy time, no need to
+# re-read them on every request in a Cloud Run container.
+_SYSTEM_PROMPT_CACHE: str | None = None
+
 
 def _load_system_prompt() -> str:
     """Load and combine the case brief instructions and HTML template.
 
-    Reads two files from brief/prompts/:
-        case_brief.txt           — reasoning instructions and placeholder rules
-        case_brief_template.html — HTML template with [PLACEHOLDER] slots
+    Reads two files from brief/prompts/ on first call, then returns the cached
+    string for subsequent calls (files are static within a Cloud Run revision).
 
-    Keeping them separate allows the visual template to be iterated on
-    independently from the LLM reasoning instructions.
+        prompt.md   — reasoning instructions and placeholder rules
+        template.html — HTML template with [PLACEHOLDER] slots
 
     Raises:
         FileNotFoundError: if either file does not exist.
     """
+    global _SYSTEM_PROMPT_CACHE
+    if _SYSTEM_PROMPT_CACHE is not None:
+        return _SYSTEM_PROMPT_CACHE
+
     # Paths constructed from a known constant directory — not user-supplied (CWE-22)
-    prompt_path   = PROMPTS_DIR / "case_brief.txt"
-    template_path = PROMPTS_DIR / "case_brief_template.html"
+    prompt_path   = PROMPTS_DIR / "prompt.md"
+    template_path = PROMPTS_DIR / "template.html"
 
     for path in (prompt_path, template_path):
         if not path.exists():
             raise FileNotFoundError(
                 f"Required prompt file not found: {path}\n"
-                "Ensure both brief/prompts/case_brief.txt and "
-                "brief/prompts/case_brief_template.html exist."
+                "Ensure both brief/prompts/prompt.md and "
+                "brief/prompts/template.html exist."
             )
 
     instructions = prompt_path.read_text(encoding="utf-8")
     template     = template_path.read_text(encoding="utf-8")
 
-    return f"{instructions}\n\n### HTML Template\n\n{template}"
+    _SYSTEM_PROMPT_CACHE = f"{instructions}\n\n### HTML Template\n\n{template}"
+    return _SYSTEM_PROMPT_CACHE
 
 
 def generate_case_brief_html(vendor_json: dict) -> str:
@@ -938,11 +956,12 @@ def generate_case_brief_html(vendor_json: dict) -> str:
     system_prompt   = _load_system_prompt()
     vendor_json_str = json.dumps(vendor_json, indent=2, default=str)
 
-    # Vertex AI client — same setup as test/test_gemini.py
+    # Vertex AI client — 5-minute timeout guards against hung Cloud Run requests
     client = genai.Client(
         vertexai=True,
         project=GCP_PROJECT_ID,
         location=GCP_LOCATION,
+        http_options=HttpOptions(timeout=300_000),
     )
 
     # Combine system prompt and case brief JSON into a single turn
@@ -1028,8 +1047,8 @@ if __name__ == "__main__":
     """Build a sample case brief and save it to a JSON file.
 
     Usage:
-        python3 brief/case_brief_builder.py                  # vendor with most txns
-        python3 brief/case_brief_builder.py <vendor_number>  # specific vendor
+        python3 brief/builder.py                  # vendor with most txns
+        python3 brief/builder.py <vendor_number>  # specific vendor
     """
     _require_config()
     client = _bq_client()
