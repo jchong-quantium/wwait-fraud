@@ -11,11 +11,7 @@
 --      invoice_amount_excl_tax (SAP), gl_account, SAP branch entirely
 --      Status: BLOCKED — awaiting gcp-wow-ent-im-tbl-prod project access
 --
--- [D2] gcp-wow-risk-de-data-prod.audit_group_enablement.doa
---      Needed for: approver_doa_annual_limit
---      Status: BLOCKED — awaiting gcp-wow-risk-de-data-prod project access
---
--- [D3] gcp-wow-fac-de-data-prod.maximo.PO / COMPANIES / PERSON
+-- [D2] gcp-wow-fac-de-data-prod.maximo.PO / COMPANIES / PERSON
 --      Needed for: Maximo branch of base_transaction
 --      Status: PARKED — Maximo coverage to be confirmed with Gopi before building
 --
@@ -33,11 +29,7 @@
 --      in Silver_Ariba_PO_Linelevel_v. Available in SAP via DocumentLastChangedOn
 --      in document_schedule_lines_v. Will be populated when SAP branch is added.
 --
--- [L4] approver_doa_annual_limit is NULL for all rows — requires
---      audit_group_enablement.doa which is in gcp-wow-risk-de-data-prod.
---      See [D2] above.
---
--- [L5] gl_account is NULL for all Ariba rows — GL account is assigned at SAP
+-- [L4] gl_account is NULL for all Ariba rows — GL account is assigned at SAP
 --      posting time, not in Ariba. Will be populated when SAP branch is added.
 --
 -- [L6] payment_terms_description and payment_terms_days have been omitted
@@ -59,7 +51,7 @@
 --      Monthly — aligned with existing routine refresh cycle
 -- =============================================================================
 
-CREATE OR REPLACE TABLE `gcp-wow-groupit-bizwear-dev.fraud_dev.base_transaction`
+CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
 AS
 
 WITH
@@ -104,7 +96,7 @@ ariba_last_approver AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- DOA LOOKUP [D2]
+-- DOA LOOKUP
 -- Source: gcp-wow-risk-de-lab-dev.audit_group_enablement.doa
 -- Deduplicates by UPPER(Employee_Name) — names appearing more than once are
 -- excluded to avoid ambiguous DOA limit assignment.
@@ -142,7 +134,7 @@ po_line_level AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ARIBA RAW
--- Source: gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw
+-- Source: ${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw
 -- Reads from the recreated view which replicates ariba_po_invoice_vw from the
 -- risk team's dataset. Joins approvals on Requisition_ID.
 --
@@ -181,7 +173,7 @@ ariba_raw AS (
 
     po.Approver                                           AS approver_last,
 
-    -- [D2] approver_doa_annual_limit — joined from doa_unique CTE
+    -- approver_doa_annual_limit — joined from doa_unique CTE
     -- NULL when approved_by_user is absent from DOA table or has duplicate entries
     MAX(doa.approver_doa_annual_limit)                    AS approver_doa_annual_limit,
 
@@ -214,11 +206,16 @@ ariba_raw AS (
       ELSE NULL
     END                                                   AS cost_centre,
 
-    -- [L5] gl_account NULL — assigned at SAP posting time, not in Ariba
+    -- [L4] gl_account NULL — assigned at SAP posting time, not in Ariba
     -- will be populated when SAP branch is added [D1]
-    CAST(NULL AS STRING)                                  AS gl_account
+    CAST(NULL AS STRING)                                  AS gl_account,
 
-  FROM `gcp-wow-groupit-bizwear-dev.fraud.ariba_po_invoice_vw` po
+    pll.po_line_item_count,
+    pll.invoiced_line_item_count,
+    pll.total_po_spend_line_level,
+    pll.total_invoiced_line_level
+
+  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.ariba_po_invoice_vw` po
   LEFT JOIN ariba_last_approver la
     ON la.Approvable_ID = po.Requisition_ID
   LEFT JOIN doa_unique doa
@@ -266,18 +263,14 @@ SELECT
   SAFE_DIVIDE(po_spend, CAST(invoice_amount_excl_tax AS FLOAT64)) AS po_to_invoice_ratio,
   SAFE_DIVIDE(po_spend, CAST(payment_amount AS FLOAT64))          AS po_to_payment_ratio,
   SAFE_DIVIDE(po_spend, approver_doa_annual_limit)                AS po_to_doa_ratio,
-  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days,
-  CAST(po_line_item_count AS INT64)                               AS po_line_item_count,
-  CAST(invoiced_line_item_count AS INT64)                         AS invoiced_line_item_count,
-  total_po_spend_line_level,
-  total_invoiced_line_level
+  DATE_DIFF(invoice_date, po_date, DAY)                           AS po_to_invoice_days
 FROM ariba_raw
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SAP BRANCH — PENDING [D1]
 -- To be added as UNION ALL once the following views are recreated:
---   gcp-wow-groupit-bizwear-dev.fraud.base_payment_vw
---   gcp-wow-groupit-bizwear-dev.fraud.sap_invoices_vw
+--   ${GCP_PROJECT_ID}.${BQ_DATASET}.base_payment_vw
+--   ${GCP_PROJECT_ID}.${BQ_DATASET}.sap_invoices_vw
 -- Source views depend on:
 --   gcp-wow-ent-im-tbl-prod.gs_allgrp_fin_data.bkpf_bseg_accounting_doc_v
 -- ─────────────────────────────────────────────────────────────────────────────
