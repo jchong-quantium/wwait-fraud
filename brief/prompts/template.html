@@ -41,20 +41,6 @@ body {
   color: #666;
 }
 
-/* Tier badge */
-.tier-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  margin-top: 6px;
-}
-.tier-1 { background: #000006; color: #fff; }
-.tier-2 { background: #444; color: #fff; }
-.tier-3 { background: #ece8e4; color: #000006; }
-.tier-untiered { background: #f0f0f0; color: #888; border: 1px dashed #aaa; }
-
 /* Typology tag */
 .typology-tag {
   display: inline-block;
@@ -64,8 +50,7 @@ body {
   color: #fff;
   font-weight: 600;
   letter-spacing: 0.3px;
-  margin-left: 8px;
-  vertical-align: middle;
+  margin-top: 6px;
 }
 .typology-tag.none {
   background: #ece8e4;
@@ -119,7 +104,7 @@ body {
   vertical-align: middle;
   margin-left: 6px;
 }
-.tag-llm { background: #e8f0e8; color: #1a3a1a; border: 1px solid #b0c8b0; }
+.tag-llm  { background: #e8f0e8; color: #1a3a1a; border: 1px solid #b0c8b0; }
 .tag-code { background: #dae8fc; color: #1a3a5c; border: 1px solid #b0c8e8; }
 
 /* Tables */
@@ -174,9 +159,31 @@ tr:hover { background: #fafafa; }
 }
 .metric-value.unavailable {
   font-size: 11px;
-  color: #aaa;
   font-weight: 400;
-  font-style: italic;
+  color: #aaa;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #666;
+}
+.pagination button {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  color: #333;
+}
+.pagination button:disabled {
+  color: #bbb;
+  cursor: default;
+  border-color: #eee;
 }
 
 /* Footer */
@@ -209,7 +216,6 @@ tr:hover { background: #fafafa; }
   <div class="header-left">
     <h1>[VENDOR_NAME]</h1>
     <div class="vendor-id">[VENDOR_NUMBER] · [CATEGORY] · [COUNTRY]</div>
-    <div class="tier-badge [TIER_CLASS]">[TIER_LABEL]</div>
     <span class="typology-tag">[TYPOLOGY]</span>
   </div>
   <div class="header-right">
@@ -218,9 +224,9 @@ tr:hover { background: #fafafa; }
   </div>
 </div>
 
-<!-- CONFIDENCE NOTE: only include if peer_group_size < 10 or total_transaction_count < 5 -->
+<!-- CONFIDENCE NOTE: remove entirely if peer_group_size >= 10 AND total_transaction_count >= 5 -->
 <div class="confidence-note">
-  ⚠ Small peer group (n=[PEER_GROUP_SIZE]) — percentile ranks should be interpreted with caution.
+  ⚠ Small peer group or limited transaction history — percentile ranks should be interpreted with caution.
 </div>
 
 <!-- SECTION 1: WHY THIS VENDOR -->
@@ -308,14 +314,14 @@ tr:hover { background: #fafafa; }
 
   <!-- 5c: Approval Concentration -->
   <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Approval Concentration</p>
-  <table>
+  <table id="tbl-approval">
     <tr><th>Approver</th><th>Share of Approvals</th></tr>
     [APPROVAL_CONCENTRATION_ROWS]
   </table>
 
   <!-- 5d: Top Transactions -->
-  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Top Transactions ([TOTAL_TXN_COUNT] total · [FLAGGED_TXN_COUNT] flagged)</p>
-  <table>
+  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Top Transactions ([TOTAL_TXN_COUNT] total)</p>
+  <table id="tbl-transactions">
     <tr><th>Date</th><th>Amount</th><th>Approver</th><th>Requestor</th><th>Status</th><th>Terms</th></tr>
     [TRANSACTION_ROWS]
   </table>
@@ -333,6 +339,48 @@ tr:hover { background: #fafafa; }
   <span>Fraud Analytics Programme · AI Case Brief v0.1</span>
   <span>Classification: Confidential</span>
 </div>
+
+<script>
+function paginateTable(tableId, pageSize) {
+  var table = document.getElementById(tableId);
+  if (!table) return;
+  var rows = Array.from(table.querySelectorAll('tr')).filter(function(r) {
+    return !r.querySelector('th');
+  });
+  if (rows.length <= pageSize) return;
+
+  var page = 0;
+  var totalPages = Math.ceil(rows.length / pageSize);
+
+  function render() {
+    rows.forEach(function(r, i) {
+      r.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
+    });
+    info.textContent = 'Page ' + (page + 1) + ' of ' + totalPages;
+    prevBtn.disabled = page === 0;
+    nextBtn.disabled = page === totalPages - 1;
+  }
+
+  var nav = document.createElement('div');
+  nav.className = 'pagination';
+  var prevBtn = document.createElement('button');
+  prevBtn.textContent = '← Prev';
+  var info = document.createElement('span');
+  var nextBtn = document.createElement('button');
+  nextBtn.textContent = 'Next →';
+  nav.appendChild(prevBtn);
+  nav.appendChild(info);
+  nav.appendChild(nextBtn);
+  table.parentNode.insertBefore(nav, table.nextSibling);
+
+  prevBtn.onclick = function() { page--; render(); };
+  nextBtn.onclick = function() { page++; render(); };
+  render();
+}
+
+paginateTable('tbl-transactions', 5);
+paginateTable('tbl-approval', 5);
+</script>
 
 </body>
 </html>
