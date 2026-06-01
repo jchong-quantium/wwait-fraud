@@ -2,14 +2,10 @@
 -- vendor_scores — single brief-input table per vendor
 -- =====================================================================
 --
--- PLACEHOLDER — anomaly scores are RAND() stubs until the Isolation
--- Forest model writes real scores to this table.
--- Do not use anomaly_score / anomaly_rank for production triage.
---
 -- Extends vendor_features with:
---   (a) Anomaly score — STUB: RAND() until IF model is integrated
+--   (a) Anomaly score — rolled up from transaction_scores (IF model)
 --   (b) Binary risk flags — pre-computed from base_transaction
---   (c) Top 10 transactions serialised as JSON
+--   (c) Top 10 transactions serialised as JSON, sorted by anomaly_score
 --   (d) Approval concentration serialised as JSON
 --   (e) Payment terms breakdown serialised as JSON
 --
@@ -17,14 +13,17 @@
 -- All flag derivation and aggregation that was previously done in
 -- Python is pushed here, keeping the brief service as JSON assembly only.
 --
--- ANOMALY SCORE STUB [S1]:
---   anomaly_score = RAND() — replaced by Isolation Forest output (Track B Phase 2).
---   top_features  = NULL   — populated by IF model once available.
---   model_version = 'stub-random-v0'
+-- ANOMALY SCORE ROLLUP:
+--   anomaly_rate  = % of vendor's transactions flagged as anomalous (primary)
+--   anomaly_score = same as anomaly_rate (used for ranking)
+--   anomaly_rank  = 1 = highest anomaly_rate
+--   top_features  = most frequent SHAP top driver across vendor's anomalies
+--   model_version = scorer version from transaction_scores
 --
 -- TOP TRANSACTIONS [S2]:
---   Sorted by po_spend DESC until transaction_scores table is available.
---   Will switch to anomaly_score DESC once IF scores at transaction level.
+--   Sorted by anomaly_score DESC from transaction_scores.
+--   Transactions not scored (filtered out by scorer) retain NULL anomaly_score
+--   and sort last.
 --
 -- BINARY FLAGS — NULL SEMANTICS:
 --   NULL  = underlying data not collected / check cannot be performed
@@ -136,16 +135,22 @@ terms_breakdown AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────
--- TOP 10 TRANSACTIONS — native ARRAY<STRUCT>
--- Sorted by po_spend DESC [S2] — will switch to anomaly_score once
--- transaction_scores is available.
+-- TOP 10 TRANSACTIONS — sorted by anomaly_score DESC from transaction_scores.
+-- Unscored transactions (filtered out by scorer) sort last via NULLS LAST.
 -- ─────────────────────────────────────────────────────────────────────
 ranked_txns AS (
   SELECT
-    *,
-    ROW_NUMBER() OVER (PARTITION BY vendor_number ORDER BY po_spend DESC NULLS LAST) AS rn
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction`
-  WHERE vendor_number IS NOT NULL
+    bt.*,
+    ts.anomaly_score                                          AS txn_anomaly_score,
+    ts.top_driver_feature,
+    ROW_NUMBER() OVER (
+      PARTITION BY bt.vendor_number
+      ORDER BY ts.anomaly_score DESC NULLS LAST
+    )                                                         AS rn
+  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction` bt
+  LEFT JOIN `${GCP_PROJECT_ID}.${BQ_DATASET}.transaction_scores` ts
+    USING (transaction_id)
+  WHERE bt.vendor_number IS NOT NULL
 ),
 
 top_transactions AS (
@@ -169,9 +174,11 @@ top_transactions AS (
         invoice_status,
         reconciliation_status,
         payment_terms,
-        system
+        system,
+        txn_anomaly_score,
+        top_driver_feature
       )
-      ORDER BY po_spend DESC NULLS LAST
+      ORDER BY txn_anomaly_score DESC NULLS LAST
     )                                                         AS top_transactions
   FROM ranked_txns
   WHERE rn <= 10
@@ -195,15 +202,33 @@ va AS (
 ),
 
 -- ─────────────────────────────────────────────────────────────────────
--- RANDOM SCORES — stub until IF model writes to this table [S1]
--- anomaly_score: RAND() per vendor
--- anomaly_rank:  1 = most anomalous
+-- VENDOR ANOMALY SCORES — rolled up from transaction_scores
+-- anomaly_rate  = % of transactions flagged (primary ranking metric)
+-- top_features  = most frequent SHAP top driver across vendor's anomalies
 -- ─────────────────────────────────────────────────────────────────────
-random_scores AS (
+vendor_anomaly AS (
   SELECT
     vendor_number,
-    RAND()                                                    AS anomaly_score
-  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_features`
+    COUNTIF(is_anomaly) / COUNT(*)                           AS anomaly_rate,
+    MAX(anomaly_score)                                       AS anomaly_score_max,
+    AVG(anomaly_score)                                       AS anomaly_score_mean,
+    COUNTIF(is_anomaly)                                      AS anomaly_txn_count,
+    COUNT(*)                                                 AS scored_txn_count,
+    -- Most frequent SHAP top driver across this vendor's anomalous transactions
+    (
+      SELECT top_driver_feature
+      FROM UNNEST(ARRAY_AGG(
+        IF(is_anomaly AND top_driver_feature IS NOT NULL, top_driver_feature, NULL)
+        IGNORE NULLS
+      ))
+      GROUP BY top_driver_feature
+      ORDER BY COUNT(*) DESC
+      LIMIT 1
+    )                                                        AS top_features,
+    ANY_VALUE(model_version)                                 AS model_version,
+    MAX(scored_at)                                           AS scored_at
+  FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.transaction_scores`
+  GROUP BY vendor_number
 )
 
 -- ─────────────────────────────────────────────────────────────────────
@@ -212,12 +237,16 @@ random_scores AS (
 -- and adds scoring, flags, and pre-serialised JSON fields.
 -- ─────────────────────────────────────────────────────────────────────
 SELECT
-  -- Anomaly score [S1: replace with IF output]
-  rs.anomaly_score,
-  ROW_NUMBER() OVER (ORDER BY rs.anomaly_score DESC)          AS anomaly_rank,
-  CAST(NULL AS STRING)                                        AS top_features,
-  'stub-random-v0'                                            AS model_version,
-  CURRENT_TIMESTAMP()                                          AS scored_at,
+  -- Anomaly scores rolled up from transaction_scores
+  va.anomaly_rate                                             AS anomaly_score,
+  ROW_NUMBER() OVER (ORDER BY va.anomaly_rate DESC)           AS anomaly_rank,
+  va.anomaly_score_max,
+  va.anomaly_score_mean,
+  va.anomaly_txn_count,
+  va.scored_txn_count,
+  va.top_features,
+  va.model_version,
+  va.scored_at,
 
   --  All vendor_features columns (raw features + peer comparisons)
   vf.*,
@@ -255,7 +284,7 @@ SELECT
   tt.top_transactions
 
 FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_features` vf
-JOIN random_scores rs
+JOIN vendor_anomaly va
   USING (vendor_number)
 LEFT JOIN va
   USING (vendor_number)
