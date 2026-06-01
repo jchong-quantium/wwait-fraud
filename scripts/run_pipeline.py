@@ -34,6 +34,9 @@ from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError  # type: ignore
 from google.oauth2 import id_token  # type: ignore
 
+# Add brief/ to path so builder can be imported directly for local runs
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "brief"))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -211,15 +214,36 @@ def main() -> None:
         logger.info("=" * 60)
         return
 
-    # Trigger Cloud Run brief generation
-    # TODO: replace test vendor with loop over case_brief_inputs table rows
-    logger.info("Triggering brief generation service...")
-    try:
-        result = trigger_brief_service(vendor_id="test-vendor-001")
-        logger.info("Response: %s", result)
-    except requests.RequestException as e:
-        logger.error("Cloud Run error: %s", e)
-        sys.exit(1)
+    # Brief generation — call builder directly for local runs (no OIDC needed)
+    from builder import build_case_brief, generate_case_brief_html, select_top_vendors  # type: ignore
+    from datetime import datetime
+    from pathlib import Path
+
+    BRIEF_TOP_N = int(os.environ.get("BRIEF_TOP_N", "10"))
+
+    logger.info("Fetching top %d vendors by anomaly score...", BRIEF_TOP_N)
+    vendors = select_top_vendors(BRIEF_TOP_N, client)
+    if not vendors:
+        logger.warning("No vendors found in vendor_scores — skipping brief generation")
+    else:
+        output_dir = Path(__file__).resolve().parent.parent / "brief" / "output"
+        output_dir.mkdir(exist_ok=True)
+        failed = 0
+        for vendor_id in vendors:
+            logger.info("Generating brief: %s", vendor_id)
+            try:
+                brief = build_case_brief(vendor_id, client=client)
+                brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
+                html = generate_case_brief_html(brief)
+                ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+                html_path = output_dir / f"case_brief_{vendor_id}_{ts}.html"
+                html_path.write_text(html, encoding="utf-8")
+                logger.info("  Saved: %s", html_path)
+            except Exception as e:
+                logger.error("  Failed for %s: %s", vendor_id, e)
+                failed += 1
+        if failed:
+            logger.warning("%d brief(s) failed", failed)
 
     logger.info("=" * 60)
     logger.info("Pipeline complete")
