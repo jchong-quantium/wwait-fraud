@@ -75,6 +75,7 @@ SQL_FILES = [
     "employee_attributes.sql",
     "base_transaction.sql",
     "vendor_features.sql",
+    "vendor_scores.sql",
 ]
 
 

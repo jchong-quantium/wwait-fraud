@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Case Brief — [VENDOR_NAME] ([VENDOR_NUMBER])</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Roboto', 'Segoe UI', sans-serif;
+  background: #fff;
+  color: #1a1a1a;
+  padding: 32px 40px;
+  max-width: 960px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #000006;
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+.header-left h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #000006;
+  margin-bottom: 2px;
+}
+.header-left .vendor-id {
+  font-size: 11px;
+  color: #666;
+  letter-spacing: 0.5px;
+}
+.header-right {
+  text-align: right;
+  font-size: 11px;
+  color: #666;
+}
+
+/* Typology tag */
+.typology-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: #3f69ae;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-top: 6px;
+}
+.typology-tag.none {
+  background: #ece8e4;
+  color: #666;
+}
+
+/* Section headers */
+.section {
+  margin-bottom: 20px;
+}
+.section-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #000006;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-num {
+  background: #000006;
+  color: #fff;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.section-body {
+  font-size: 12.5px;
+  color: #333;
+  line-height: 1.6;
+}
+.section-body p {
+  margin-bottom: 6px;
+}
+
+/* Tag labels */
+.tag {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 6px;
+  font-weight: 600;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.tag-llm  { background: #e8f0e8; color: #1a3a1a; border: 1px solid #b0c8b0; }
+.tag-code { background: #dae8fc; color: #1a3a5c; border: 1px solid #b0c8e8; }
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 6px;
+}
+th {
+  background: #f5f5f5;
+  font-weight: 700;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1.5px solid #000006;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #333;
+}
+td {
+  padding: 5px 10px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+tr:hover { background: #fafafa; }
+
+/* Exposure grid */
+.exposure-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+.metric-card {
+  border: 1px solid #ddd;
+  padding: 8px 10px;
+  text-align: center;
+}
+.metric-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  margin-bottom: 2px;
+}
+.metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #000006;
+}
+.metric-value.unavailable {
+  font-size: 11px;
+  font-weight: 400;
+  color: #aaa;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #666;
+}
+.pagination button {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  color: #333;
+}
+.pagination button:disabled {
+  color: #bbb;
+  cursor: default;
+  border-color: #eee;
+}
+
+/* Footer */
+.footer {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid #ddd;
+  font-size: 10px;
+  color: #999;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Confidence note */
+.confidence-note {
+  background: #fffdf0;
+  border: 1px dashed #ccc;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: #666;
+  font-style: italic;
+  margin-bottom: 16px;
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <h1>[VENDOR_NAME]</h1>
+    <div class="vendor-id">[VENDOR_NUMBER] · [CATEGORY] · [COUNTRY]</div>
+    <span class="typology-tag">[TYPOLOGY]</span>
+  </div>
+  <div class="header-right">
+    Generated [GENERATED_DATE]<br>
+    Peer group: [PEER_GROUP] (n=[PEER_GROUP_SIZE])
+  </div>
+</div>
+
+<!-- CONFIDENCE NOTE: remove entirely if peer_group_size >= 10 AND total_transaction_count >= 5 -->
+<div class="confidence-note">
+  ⚠ Small peer group or limited transaction history — percentile ranks should be interpreted with caution.
+</div>
+
+<!-- SECTION 1: WHY THIS VENDOR -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">1</span> Why This Vendor <span class="tag tag-llm">LLM</span>
+  </div>
+  <div class="section-body">
+    <p>[WHY_THIS_VENDOR]</p>
+  </div>
+</div>
+
+<!-- SECTION 2: EXPOSURE -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">2</span> Exposure <span class="tag tag-llm">LLM</span>
+  </div>
+  <div class="section-body">
+    <p>[EXPOSURE_NARRATIVE]</p>
+  </div>
+  <div class="exposure-grid">
+    <div class="metric-card">
+      <div class="metric-label">PO Spend (12m)</div>
+      <div class="metric-value">$[PO_SPEND_12M]</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Invoice Spend (12m)</div>
+      <div class="metric-value">$[INVOICE_SPEND_12M]</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Payments (12m)</div>
+      <div class="metric-value">$[PAYMENT_AMOUNT_12M]</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Unrealised Fraud</div>
+      <div class="metric-value unavailable">[UNREALISED_FRAUD]</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Potential Fraud</div>
+      <div class="metric-value unavailable">[POTENTIAL_FRAUD]</div>
+    </div>
+  </div>
+</div>
+
+<!-- SECTION 3: RECOMMENDATION -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">3</span> Recommendation <span class="tag tag-llm">LLM</span>
+  </div>
+  <div class="section-body">
+    <p>[RECOMMENDATION]</p>
+  </div>
+</div>
+
+<!-- SECTION 4: WHAT WAS DEPRIORITISED -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">4</span> What Was Deprioritised <span class="tag tag-llm">LLM</span>
+  </div>
+  <table>
+    <tr><th>Signal</th><th>Reason Deprioritised</th></tr>
+    [DEPRIORITISED_ROWS]
+  </table>
+</div>
+
+<!-- SECTION 5: SUPPORTING DATA -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">5</span> Supporting Data <span class="tag tag-code">Code</span>
+  </div>
+
+  <!-- 5a: Anomaly Metrics -->
+  <p style="font-size:11px;font-weight:700;margin:10px 0 4px;color:#333;">Anomaly Metrics — Top Deviations from Peer Group</p>
+  <table>
+    <tr><th>Metric</th><th>Vendor</th><th>Peer Median</th><th>Percentile</th></tr>
+    [ANOMALY_METRIC_ROWS]
+  </table>
+
+  <!-- 5b: Binary Flags -->
+  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Binary Flags</p>
+  <table>
+    <tr><th>Flag</th><th>Status</th><th>Detail</th></tr>
+    [FLAG_ROWS]
+  </table>
+
+  <!-- 5c: Approval Concentration -->
+  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Approval Concentration</p>
+  <table id="tbl-approval">
+    <tr><th>Approver</th><th>Share of Approvals</th></tr>
+    [APPROVAL_CONCENTRATION_ROWS]
+  </table>
+
+  <!-- 5d: Top Transactions -->
+  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Top Transactions ([TOTAL_TXN_COUNT] total)</p>
+  <table id="tbl-transactions">
+    <tr><th>Date</th><th>Amount</th><th>Approver</th><th>Requestor</th><th>Status</th><th>Terms</th></tr>
+    [TRANSACTION_ROWS]
+  </table>
+
+  <!-- 5e: Related Vendors -->
+  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Related Vendors (Same Supplier)</p>
+  <table>
+    <tr><th>Vendor Number</th><th>Vendor Name</th><th>Anomaly Score</th><th>12m Spend</th></tr>
+    [RELATED_VENDOR_ROWS]
+  </table>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <span>Fraud Analytics Programme · AI Case Brief v0.1</span>
+  <span>Classification: Confidential</span>
+</div>
+
+<script>
+function paginateTable(tableId, pageSize) {
+  var table = document.getElementById(tableId);
+  if (!table) return;
+  var rows = Array.from(table.querySelectorAll('tr')).filter(function(r) {
+    return !r.querySelector('th');
+  });
+  if (rows.length <= pageSize) return;
+
+  var page = 0;
+  var totalPages = Math.ceil(rows.length / pageSize);
+
+  function render() {
+    rows.forEach(function(r, i) {
+      r.style.display = (i >= page * pageSize && i < (page + 1) * pageSize) ? '' : 'none';
+    });
+    info.textContent = 'Page ' + (page + 1) + ' of ' + totalPages;
+    prevBtn.disabled = page === 0;
+    nextBtn.disabled = page === totalPages - 1;
+  }
+
+  var nav = document.createElement('div');
+  nav.className = 'pagination';
+  var prevBtn = document.createElement('button');
+  prevBtn.textContent = '← Prev';
+  var info = document.createElement('span');
+  var nextBtn = document.createElement('button');
+  nextBtn.textContent = 'Next →';
+  nav.appendChild(prevBtn);
+  nav.appendChild(info);
+  nav.appendChild(nextBtn);
+  table.parentNode.insertBefore(nav, table.nextSibling);
+
+  prevBtn.onclick = function() { page--; render(); };
+  nextBtn.onclick = function() { page++; render(); };
+  render();
+}
+
+paginateTable('tbl-transactions', 5);
+paginateTable('tbl-approval', 5);
+</script>
+
+</body>
+</html>
