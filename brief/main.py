@@ -80,15 +80,19 @@ def generate():
     try:
         # Step 1: query vendor_scores and assemble the case brief JSON
         brief = build_case_brief(vendor_id)
-        brief["generated_at"] = datetime.now(tz=MELBOURNE_TZ).strftime("%-d %B %Y")
+        now = datetime.now(tz=MELBOURNE_TZ)
+        brief["generated_at"] = now.strftime("%-d %B %Y")
 
         # Step 2: send the JSON to Gemini on Vertex AI and get back HTML
         html = generate_case_brief_html(brief)
 
         # Step 3: upload HTML to Cloud Storage under briefs/<vendor_id>/
-        ts = datetime.now(tz=MELBOURNE_TZ).strftime("%Y%m%dT%H%M%S")
+        ts = now.strftime("%Y%m%dT%H%M%S")
         gcs_uri = upload_html_to_gcs(html, vendor_id, ts)
 
+    except ValueError as exc:
+        logger.warning("Vendor not found: %s", exc)
+        return jsonify({"error": str(exc)}), 404
     except EnvironmentError as exc:
         logger.error("Configuration error: %s", exc)
         return jsonify({"error": "Service misconfigured"}), 500
