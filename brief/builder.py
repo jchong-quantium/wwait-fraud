@@ -242,8 +242,12 @@ def _load_system_prompt() -> str:
 
 def generate_case_brief_html(vendor_json: dict) -> str:
     """Generate a 5-section HTML investigation report via Gemini on Vertex AI."""
-    if not GCP_PROJECT_ID:
-        raise EnvironmentError("GCP_PROJECT_ID must be set in .env")
+    missing = [v for v in ("GCP_PROJECT_ID", "GEMINI_MODEL") if not os.environ.get(v)]
+    if missing:
+        raise EnvironmentError(
+            f"Required environment variables not set: {', '.join(missing)}. "
+            "Copy .env.example to .env and populate the values."
+        )
 
     system_prompt = _load_system_prompt()
     vendor_json_str = json.dumps(vendor_json, indent=2, default=str)
