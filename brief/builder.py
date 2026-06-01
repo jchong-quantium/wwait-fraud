@@ -210,6 +210,7 @@ def build_batch(vendor_numbers: list[str]) -> list[dict]:
 # ── LLM integration ───────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT_CACHE: str | None = None
+_GENAI_CLIENT_CACHE: genai.Client | None = None
 
 
 def _load_system_prompt() -> str:
@@ -254,13 +255,16 @@ def generate_case_brief_html(vendor_json: dict) -> str:
     system_prompt = _load_system_prompt()
     vendor_json_str = json.dumps(vendor_json, indent=2, default=str)
 
-    # 5-minute timeout guards against hung Cloud Run requests
-    client = genai.Client(
-        vertexai=True,
-        project=GCP_PROJECT_ID,
-        location=GCP_LOCATION,
-        http_options=HttpOptions(timeout=300_000),
-    )
+    global _GENAI_CLIENT_CACHE
+    if _GENAI_CLIENT_CACHE is None:
+        # 5-minute timeout guards against hung Cloud Run requests
+        _GENAI_CLIENT_CACHE = genai.Client(
+            vertexai=True,
+            project=GCP_PROJECT_ID,
+            location=GCP_LOCATION,
+            http_options=HttpOptions(timeout=300_000),
+        )
+    client = _GENAI_CLIENT_CACHE
 
     contents = (
         f"{system_prompt}\n\n---\n\n"
