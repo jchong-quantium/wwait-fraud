@@ -61,13 +61,24 @@ flags AS (
       OR po_status IN ('Rejected')
     ) > 0                                                     AS blocked_payment_flag,
 
-    -- payment_within_7d_flag: >= 20% of transactions on N001 (7-day) terms
+    -- payment_within_7d_flag: >= 20% of transactions on fast terms (<= 7 days)
+    -- Covers: N001 (7d), N011 (5d), N03D (3d), N005 (immediate)
     SAFE_DIVIDE(
-      COUNTIF(payment_terms LIKE '%N001%'),
+      COUNTIF(
+        payment_terms LIKE '%N001%'
+        OR payment_terms LIKE '%N011%'
+        OR payment_terms LIKE '%N03D%'
+        OR payment_terms LIKE '%N005%'
+      ),
       COUNT(*)
     ) >= 0.20                                                 AS payment_within_7d_flag,
 
-    COUNTIF(payment_terms LIKE '%N001%')                     AS fast_payment_terms_count,
+    COUNTIF(
+      payment_terms LIKE '%N001%'
+      OR payment_terms LIKE '%N011%'
+      OR payment_terms LIKE '%N03D%'
+      OR payment_terms LIKE '%N005%'
+    )                                                         AS fast_payment_terms_count,
     COUNTIF(acted_on_behalf_of = TRUE)                       AS acted_on_behalf_of_count,
 
     COUNTIF(invoice_status IN ('Rejected', 'Canceled'))      AS rejected_invoices_count,
