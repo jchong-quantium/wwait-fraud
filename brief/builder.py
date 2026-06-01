@@ -39,6 +39,7 @@ import logging
 import os
 import sys
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
@@ -65,6 +66,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL")
 
 # Path constructed from a known constant — not user-supplied (CWE-22)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 
 # ── Config / BQ helpers ───────────────────────────────────────────────────────
 
@@ -307,9 +309,10 @@ if __name__ == "__main__":
         logger.info("Auto-selected vendor %s", target_vendor)
 
     brief = build_case_brief(target_vendor, client=client)
-    brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
+    now = datetime.now(tz=MELBOURNE_TZ)
+    brief["generated_at"] = now.strftime("%-d %B %Y")
 
-    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    ts = now.strftime("%Y%m%dT%H%M%S")
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)
 
