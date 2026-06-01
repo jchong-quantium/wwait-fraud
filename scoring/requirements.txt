@@ -1,0 +1,8 @@
+google-cloud-bigquery==3.41.0
+google-cloud-bigquery-storage==2.29.0
+pandas==2.2.3
+pyarrow==24.0.0
+numpy==2.2.6
+scikit-learn==1.6.1
+shap==0.47.2
+python-dotenv==1.2.2
