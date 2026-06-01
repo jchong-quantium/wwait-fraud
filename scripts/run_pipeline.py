@@ -69,13 +69,18 @@ SETUP_FILES = [
     "sap_po_vw.sql",
 ]
 
-# Pipeline tables — executed in dependency order on every pipeline run.
-SQL_FILES = [
+# Pipeline tables — split into pre-scorer and post-scorer groups.
+# transaction_scorer.py runs between the two groups and writes transaction_scores.
+SQL_FILES_PRE_SCORER = [
     "vendor_attributes.sql",
     "employee_attributes.sql",
     "base_transaction.sql",
     "vendor_features.sql",
-    "vendor_scores.sql",
+    "transaction_scores.sql",  # schema stub — populated by scorer
+]
+
+SQL_FILES_POST_SCORER = [
+    "vendor_scores.sql",       # reads from transaction_scores
 ]
 
 
@@ -128,6 +133,30 @@ def run_sql_step(
     job.result()  # blocks until done, raises google.cloud.exceptions.GoogleCloudError on failure
 
     logger.info("  Rows affected: %s", job.num_dml_affected_rows)
+
+
+def _run_scorer() -> None:
+    """Run the transaction scorer inline using the local Python environment.
+
+    In production, this is a Cloud Run Job triggered by GCP Workflows.
+    Locally, we run it directly for development convenience.
+    scorer path is constructed from a known constant — not user-supplied (CWE-22).
+    """
+    import subprocess  # noqa: PLC0415 — deferred import, only used here
+
+    scorer_path = (REPO_ROOT / "scoring" / "transaction_scorer.py").resolve()
+    if not str(scorer_path).startswith(str(REPO_ROOT)):
+        raise ValueError("Path traversal detected for scorer path")
+
+    logger.info("Running transaction scorer: %s", scorer_path)
+    result = subprocess.run(
+        [sys.executable, str(scorer_path)],
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.error("Transaction scorer exited with code %d", result.returncode)
+        sys.exit(result.returncode)
+    logger.info("Transaction scorer complete")
 
 
 def trigger_brief_service(vendor_id: str) -> dict:
@@ -202,8 +231,15 @@ def main() -> None:
     logger.info("--- Setup views ---")
     _run_files(client, SETUP_FILES, SETUP_DIR, skip_on_error=True)
 
-    logger.info("--- Pipeline tables ---")
-    _run_files(client, SQL_FILES, SQL_DIR)
+    logger.info("--- Pipeline tables (pre-scorer) ---")
+    _run_files(client, SQL_FILES_PRE_SCORER, SQL_DIR)
+
+    logger.info("--- Transaction scorer ---")
+    if not args.sql_only:
+        _run_scorer()
+
+    logger.info("--- Pipeline tables (post-scorer) ---")
+    _run_files(client, SQL_FILES_POST_SCORER, SQL_DIR)
 
     if args.sql_only:
         logger.info("=" * 60)
