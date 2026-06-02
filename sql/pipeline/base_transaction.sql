@@ -1,5 +1,11 @@
 -- =============================================================================
 -- base_transaction
+-- DEPRECATED — superseded by base_transaction_line_sap (invoice-line grain,
+-- Ariba + SAP payments integrated, full approval chain, flag layer).
+-- vendor_features has been migrated to base_transaction_line_sap.
+-- This table is retained for reference only and will be retired once
+-- base_transaction_line_sap is confirmed stable in production.
+--
 -- Unified transaction table — Ariba branch only (Phase 1)
 --
 -- CURRENT STATE: Ariba branch only
@@ -188,8 +194,8 @@ ariba_raw AS (
     la.acted_on_behalf_of,
 
     -- amounts — aggregated to PO + invoice grain [L1]
-    SUM(po.PO_Spend)                                      AS po_spend,
-    SUM(po.amount_invoiced)                               AS invoice_amount_excl_tax,
+    MAX(po.PO_Spend)                                      AS po_spend,                  -- MAX not SUM: PO_Spend is a header broadcast value, not line-additive (see [L1])
+    SUM(po.amount_invoiced)                               AS invoice_amount_excl_tax,   -- SUM correct: amount_invoiced is line-additive
     MAX(po.Amount_Paid)                                   AS payment_amount,
     MAX(po.amount_paid_excl_tax)                          AS amount_paid_excl_tax,
     SUM(po.tax_paid)                                      AS tax_amount,
