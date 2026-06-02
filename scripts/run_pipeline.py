@@ -26,6 +26,7 @@ import logging
 import os
 import pathlib
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests  # type: ignore
 from dotenv import load_dotenv  # type: ignore
@@ -231,23 +232,31 @@ def main() -> None:
     else:
         gcs_client = storage.Client(project=GCP_PROJECT_ID)
         bucket = gcs_client.bucket(GCS_BUCKET)  # bucket name comes from env, not user input
-        failed = 0
-        for vendor_id in vendors:
+        BRIEF_CONCURRENCY = int(os.environ.get("BRIEF_CONCURRENCY", "4"))
+        run_ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+
+        def _process_vendor(vendor_id):
             logger.info("Generating brief: %s", vendor_id)
-            try:
-                brief = build_case_brief(vendor_id, client=client)
-                brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
-                html = generate_case_brief_html(brief)
-                ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-                # Sanitise vendor_id for use in GCS blob name — strip any path separators
-                safe_vendor_id = str(vendor_id).replace("/", "_").replace("..", "_")
-                blob_name = f"briefs/case_brief_{safe_vendor_id}_{ts}.html"
-                blob = bucket.blob(blob_name)
-                blob.upload_from_string(html, content_type="text/html; charset=utf-8")
-                logger.info("  Uploaded: gs://%s/%s", GCS_BUCKET, blob_name)
-            except Exception as e:
-                logger.error("  Failed for %s: %s", vendor_id, e)
-                failed += 1
+            brief = build_case_brief(vendor_id, client=client)
+            brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
+            html = generate_case_brief_html(brief)
+            # Sanitise vendor_id for use in GCS blob name — strip any path separators
+            safe_vendor_id = str(vendor_id).replace("/", "_").replace("..", "_")
+            blob_name = f"briefs/{run_ts}/case_brief_{safe_vendor_id}.html"
+            bucket.blob(blob_name).upload_from_string(html, content_type="text/html; charset=utf-8")
+            return blob_name
+
+        failed = 0
+        with ThreadPoolExecutor(max_workers=BRIEF_CONCURRENCY) as executor:
+            futures = {executor.submit(_process_vendor, v): v for v in vendors}
+            for future in as_completed(futures):
+                vendor_id = futures[future]
+                try:
+                    blob_name = future.result()
+                    logger.info("  Uploaded: gs://%s/%s", GCS_BUCKET, blob_name)
+                except Exception as e:
+                    logger.error("  Failed for %s: %s", vendor_id, e)
+                    failed += 1
         if failed:
             logger.warning("%d brief(s) failed", failed)
 
