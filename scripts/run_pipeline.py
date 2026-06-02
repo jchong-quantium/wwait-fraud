@@ -27,6 +27,8 @@ import os
 import pathlib
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests  # type: ignore
 from dotenv import load_dotenv  # type: ignore
@@ -52,6 +54,10 @@ GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BQ_DATASET = os.environ.get("BQ_DATASET")
 CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL")
 GCS_BUCKET = os.environ.get("GCS_BUCKET")
+BRIEF_VENDOR_LIMIT = int(os.environ["BRIEF_VENDOR_LIMIT"])
+BRIEF_WORKERS = int(os.environ["BRIEF_WORKERS"])
+
+MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 
 if not GCP_PROJECT_ID:
     sys.exit("ERROR: GCP_PROJECT_ID must be set in .env")
@@ -220,34 +226,34 @@ def main() -> None:
         return
 
     # Brief generation — call builder directly for local runs (no OIDC needed)
-    from builder import build_case_brief, generate_case_brief_html, select_top_vendors  # type: ignore
-    from datetime import datetime
+    from builder import (  # type: ignore
+        build_case_brief,
+        generate_case_brief_html,
+        select_top_vendors,
+    )
 
-    BRIEF_TOP_N = int(os.environ.get("BRIEF_TOP_N", "10"))
-
-    logger.info("Fetching top %d vendors by anomaly score...", BRIEF_TOP_N)
-    vendors = select_top_vendors(BRIEF_TOP_N, client)
+    logger.info("Fetching top %d vendors by anomaly score...", BRIEF_VENDOR_LIMIT)
+    vendors = select_top_vendors(BRIEF_VENDOR_LIMIT, client)
     if not vendors:
         logger.warning("No vendors found in vendor_scores — skipping brief generation")
     else:
         gcs_client = storage.Client(project=GCP_PROJECT_ID)
-        bucket = gcs_client.bucket(GCS_BUCKET)  # bucket name comes from env, not user input
-        BRIEF_CONCURRENCY = int(os.environ.get("BRIEF_CONCURRENCY", "4"))
-        run_ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+        bucket = gcs_client.bucket(GCS_BUCKET)
+        run_ts = datetime.now(tz=MELBOURNE_TZ).strftime("%Y%m%dT%H%M%S")
 
         def _process_vendor(vendor_id):
             logger.info("Generating brief: %s", vendor_id)
             brief = build_case_brief(vendor_id, client=client)
-            brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
+            brief["generated_at"] = datetime.now(tz=MELBOURNE_TZ).strftime("%-d %B %Y")
             html = generate_case_brief_html(brief)
-            # Sanitise vendor_id for use in GCS blob name — strip any path separators
-            safe_vendor_id = str(vendor_id).replace("/", "_").replace("..", "_")
-            blob_name = f"briefs/{run_ts}/case_brief_{safe_vendor_id}.html"
-            bucket.blob(blob_name).upload_from_string(html, content_type="text/html; charset=utf-8")
+            blob_name = f"briefs/{run_ts}/case_brief_{vendor_id}.html"
+            bucket.blob(blob_name).upload_from_string(
+                html, content_type="text/html; charset=utf-8"
+            )
             return blob_name
 
         failed = 0
-        with ThreadPoolExecutor(max_workers=BRIEF_CONCURRENCY) as executor:
+        with ThreadPoolExecutor(max_workers=BRIEF_WORKERS) as executor:
             futures = {executor.submit(_process_vendor, v): v for v in vendors}
             for future in as_completed(futures):
                 vendor_id = futures[future]
