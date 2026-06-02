@@ -35,6 +35,8 @@ Identify signals present but not worth flagging. For each, note why.
 
 The HTML template is provided at the end of this prompt under `### HTML Template`. You must use that exact template. Do not alter the structure, CSS, or layout. Fill in only the `[PLACEHOLDER]` slots as defined below.
 
+The sections are ordered by investigator priority: Why This Vendor → Recommendation → Risk Flags → Exposure → What Was Deprioritised → Supporting Data.
+
 Output the completed HTML directly. No explanation before or after. No markdown wrapping. No code fences. Just the raw HTML starting with `<!DOCTYPE html>`.
 
 ## PLACEHOLDER RULES
@@ -48,14 +50,14 @@ Output the completed HTML directly. No explanation before or after. No markdown 
 - **[PEER_GROUP_SIZE]**: `peer_group_size`
 - **[TYPOLOGY]**: the fraud typology you identified, or "No clear typology identified"
 - **[WHY_THIS_VENDOR]**: 2–3 sentences. Top 2–3 signals only. Written in terms of what it means, not what the data says. Include peer group context. Australian English.
-- **[EXPOSURE_NARRATIVE]**: 2–3 sentences. Frame the dollar figures and their significance.
+- **[EXPOSURE_NARRATIVE]**: 2–3 sentences. You must reference only the three values shown in the metric cards below: `total_po_spend_12m` (purchase orders raised), `total_invoice_spend_12m` (invoiced amount excl. GST), and `total_payment_amount_12m` (actual payments made). Use the exact same formatted figures as the cards — do not reference any other time window or field. Explain what the gap between these three numbers means in plain terms (e.g. invoices exceeding POs, payments not yet made).
 - **[PO_SPEND_12M]**: `total_po_spend_12m` formatted with commas and 2 decimal places
 - **[INVOICE_SPEND_12M]**: `total_invoice_spend_12m` formatted with commas and 2 decimal places
 - **[PAYMENT_AMOUNT_12M]**: `total_payment_amount_12m` formatted with commas and 2 decimal places
-- **[RECOMMENDATION]**: 2–4 sentences. Specific, not generic. Name the transaction type, approver, requestor, or employee pair. Tell the investigator exactly where to start.
+- **[RECOMMENDATION]**: 2 sentences maximum. Lead with a single direct action (e.g. "Review the 8 fast-payment transactions approved by [name]."). Follow with the single most important reason. No preamble, no hedging, no restating of the typology.
 - **[DEPRIORITISED_ROWS]**: one `<tr>` per deprioritised signal, each with `<td>[signal name]</td><td>[reason]</td>`. Only include signals where the JSON value is `false` (checked, negative) or a metric is present but not anomalous. Do NOT include `null` fields — those are missing data, not clean signals. If none, output `<td colspan="2">No signals present to deprioritise.</td>`
 - **[ANOMALY_METRIC_ROWS]**: one `<tr>` per anomalous metric (top 5 by deviation from peer median), each with `<td>[metric, human readable]</td><td>[vendor value]</td><td>[peer median]</td><td>[percentile rank as %]</td>`
-- **[FLAG_ROWS]**: one `<tr>` for each of these five flags in order: `employee_bank_match`, `doa_breach_flag`, `blocked_payment_flag`, `payment_within_7d_flag`, `collusion_indicator`. Each row: `<td>[flag name, human readable]</td><td>[status]</td><td>[detail]</td>`. Status must reflect the JSON value precisely: "TRUE", "FALSE" or "NOT AVAILABLE". Detail must be a short factual reference to the corresponding count field only (`acted_on_behalf_of_count`, `fast_payment_terms_count`, `rejected_invoices_count`, `rejected_po_count`). No interpretation. If no relevant detail exists, write "—".
+- **[FLAG_ROWS]**: one `<tr>` for each of these five flags in order: `employee_bank_match`, `doa_breach_flag`, `blocked_payment_flag`, `payment_within_7d_flag`, `collusion_indicator`. Each row: `<td>[flag name, human readable]</td><td>[type tag]</td><td>[status]</td><td>[detail]</td>`. Status must reflect the JSON value precisely: "TRUE", "FALSE" or "NOT AVAILABLE". Type tag rules: if the JSON value is `null`, render `<span class="tag tag-data-issue">Potential Data Issue</span>` — the check could not be performed due to missing data; if the JSON value is `true`, render `<span class="tag tag-suspicious">Suspicious Activity</span>` — the check ran and raised a flag; if the JSON value is `false`, render `<span class="tag tag-cleared">Cleared</span>` — the check ran and found nothing. Detail must be a short factual reference to the corresponding count field only (`acted_on_behalf_of_count`, `fast_payment_terms_count`, `rejected_invoices_count`, `rejected_po_count`). No interpretation. If no relevant detail exists, write "—".
 - **[TRANSACTION_ROWS]**: one `<tr>` per entry in `top_transactions` (up to 10), each with: `<td>[invoice_date or "—"]</td><td>[po_spend as $X,XXX.XX]</td><td>[approved_by_user or "—"]</td><td>[requestor or "—"]</td><td>[po_status · invoice_status · reconciliation_status — omit nulls]</td><td>[payment_terms or "—"]</td>`
 - **[TOTAL_TXN_COUNT]**: `total_transaction_count`
 - **[RELATED_VENDOR_ROWS]**: one `<tr>` per entry in `related_vendors` (derived from `supplier_id`). If empty: `<td colspan="4">No related vendors identified. Supplier ID not available.</td>`
