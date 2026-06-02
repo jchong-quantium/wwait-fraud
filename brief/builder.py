@@ -191,22 +191,6 @@ def build_case_brief(
     return vs
 
 
-def build_batch(vendor_numbers: list[str]) -> list[dict]:
-    """Build case briefs for a list of vendor_numbers, sharing one BQ client."""
-    _require_config()
-    client = _bq_client()
-    briefs: list[dict] = []
-
-    for vn in vendor_numbers:
-        try:
-            briefs.append(build_case_brief(vn, client=client))
-        except Exception as exc:
-            logger.error("Failed to build brief for vendor %s: %s", vn, exc)
-            briefs.append({"vendor_number": vn, "error": str(exc)})
-
-    return briefs
-
-
 # ── LLM integration ───────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT_CACHE: str | None = None
@@ -244,7 +228,7 @@ def _load_system_prompt() -> str:
 
 
 def generate_case_brief_html(vendor_json: dict) -> str:
-    """Generate a 5-section HTML investigation report via Gemini on Vertex AI."""
+    """Generate an HTML investigation report via Gemini on Vertex AI."""
     missing = [v for v in ("GCP_PROJECT_ID", "GEMINI_MODEL") if not os.environ.get(v)]
     if missing:
         raise EnvironmentError(
