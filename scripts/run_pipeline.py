@@ -30,7 +30,7 @@ import sys
 import requests  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 from google.auth.transport.requests import Request  # type: ignore
-from google.cloud import bigquery
+from google.cloud import bigquery, storage
 from google.cloud.exceptions import GoogleCloudError  # type: ignore
 from google.oauth2 import id_token  # type: ignore
 
@@ -50,12 +50,16 @@ load_dotenv()
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BQ_DATASET = os.environ.get("BQ_DATASET")
 CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL")
+GCS_BUCKET = os.environ.get("GCS_BUCKET")
 
 if not GCP_PROJECT_ID:
     sys.exit("ERROR: GCP_PROJECT_ID must be set in .env")
 
 if not BQ_DATASET:
     sys.exit("ERROR: BQ_DATASET must be set in .env")
+
+if not GCS_BUCKET:
+    sys.exit("ERROR: GCS_BUCKET must be set in .env")
 
 # SQL file lists — filenames only, never user-supplied, to prevent path traversal.
 # Paths are constructed at runtime from known directories (SQL_DIR / SETUP_DIR).
@@ -217,7 +221,6 @@ def main() -> None:
     # Brief generation — call builder directly for local runs (no OIDC needed)
     from builder import build_case_brief, generate_case_brief_html, select_top_vendors  # type: ignore
     from datetime import datetime
-    from pathlib import Path
 
     BRIEF_TOP_N = int(os.environ.get("BRIEF_TOP_N", "10"))
 
@@ -226,8 +229,8 @@ def main() -> None:
     if not vendors:
         logger.warning("No vendors found in vendor_scores — skipping brief generation")
     else:
-        output_dir = Path(__file__).resolve().parent.parent / "brief" / "output"
-        output_dir.mkdir(exist_ok=True)
+        gcs_client = storage.Client(project=GCP_PROJECT_ID)
+        bucket = gcs_client.bucket(GCS_BUCKET)  # bucket name comes from env, not user input
         failed = 0
         for vendor_id in vendors:
             logger.info("Generating brief: %s", vendor_id)
@@ -236,9 +239,12 @@ def main() -> None:
                 brief["generated_at"] = datetime.now().strftime("%-d %B %Y")
                 html = generate_case_brief_html(brief)
                 ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-                html_path = output_dir / f"case_brief_{vendor_id}_{ts}.html"
-                html_path.write_text(html, encoding="utf-8")
-                logger.info("  Saved: %s", html_path)
+                # Sanitise vendor_id for use in GCS blob name — strip any path separators
+                safe_vendor_id = str(vendor_id).replace("/", "_").replace("..", "_")
+                blob_name = f"briefs/case_brief_{safe_vendor_id}_{ts}.html"
+                blob = bucket.blob(blob_name)
+                blob.upload_from_string(html, content_type="text/html; charset=utf-8")
+                logger.info("  Uploaded: gs://%s/%s", GCS_BUCKET, blob_name)
             except Exception as e:
                 logger.error("  Failed for %s: %s", vendor_id, e)
                 failed += 1

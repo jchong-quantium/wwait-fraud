@@ -5,6 +5,7 @@
 *.json
 service-account*.json
 application_default_credentials.json
+adc.json
 
 # Python
 __pycache__/
@@ -20,3 +21,6 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# Brief output
+brief/output/
