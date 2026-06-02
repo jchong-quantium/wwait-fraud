@@ -42,15 +42,6 @@
 --   Each approver's annual authority limit is attached per step in the chain,
 --   with flags for POs committed above every approver's limit. The DOA join is
 --   name-based, so coverage depends on name consistency between systems.
---
--- FRAUD-SIGNAL FLAGS
---   14 boolean flag columns encoding known fraud-signal patterns, derived from
---   existing WW routines and W360 historical findings. Flag semantics:
---     TRUE  = pattern fires
---     FALSE = pattern does not fire
---     NULL  = cannot evaluate (missing date, unmatched PO, etc.)
---   Downstream aggregations must use COUNTIF(flag IS TRUE), not COUNTIF(flag).
---   See inline comments on each flag for source routine and EDA fire rate.
 -- =============================================================================
 
 CREATE OR REPLACE TABLE `${GCP_PROJECT_ID}.${BQ_DATASET}.base_transaction_line_sap`
@@ -217,13 +208,11 @@ sap_payments AS (
 ),
 
 -- VENDOR STATUS — from the vendor master. 'A' = active; anything else = blocked.
--- vendor_created_date used for flag_payment_within_7_days_vendor_creation.
 -- Keyed on vendor number; deduped to one row per vendor.
 vendor_status_lookup AS (
   SELECT
     UPPER(TRIM(Vendor))        AS vendor_number,
-    ANY_VALUE(VendorStatus)    AS vendor_status,
-    MIN(DateFirstCreated)      AS vendor_created_date
+    ANY_VALUE(VendorStatus)    AS vendor_status
   FROM `gcp-wow-ent-im-tbl-prod.adp_dm_masterdata_view.dim_vendor_v`
   WHERE Vendor IS NOT NULL
   GROUP BY UPPER(TRIM(Vendor))
