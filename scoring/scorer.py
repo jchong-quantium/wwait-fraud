@@ -31,13 +31,11 @@ def read_table(
     dataset: str,
     table: str,
     columns: list[str] | None = None,
-    where: str | None = None,
 ) -> pd.DataFrame:
     """Read a BigQuery table into a DataFrame.
 
     Table and column names are hardcoded constants in callers — not
     user-supplied — so there is no SQL injection risk (CWE-89).
-    The optional where clause is also caller-controlled (no user input).
 
     Args:
         client:  BigQuery client.
@@ -45,7 +43,6 @@ def read_table(
         dataset: BigQuery dataset name.
         table:   Table name — must be a hardcoded constant, not user input.
         columns: Optional list of column names to select (SELECT * if None).
-        where:   Optional WHERE clause string — must be a hardcoded constant.
 
     Returns:
         DataFrame with query results.
@@ -54,8 +51,6 @@ def read_table(
     # Backtick-quoted fully-qualified table ref — not user-supplied (CWE-89)
     fqt = f"`{project}.{dataset}.{table}`"
     sql = f"SELECT {col_clause} FROM {fqt}"
-    if where:
-        sql += f" WHERE {where}"
 
     logger.info("Reading %s.%s.%s ...", project, dataset, table)
     df = client.query(sql).to_dataframe()

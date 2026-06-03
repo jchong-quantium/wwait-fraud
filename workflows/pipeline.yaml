@@ -39,13 +39,49 @@ main:
                 - condition: true
                   next: check_bq_status
 
-    # Step 3: Fan out brief generation. One Cloud Run call per vendor, in parallel.
-    # Replace the in: list with a BQ query result once case_brief_inputs table exists.
+    # Step 3: Query vendor_scores for the top 10 vendors by anomaly score.
+    # Uses the synchronous jobs.query API — fast for a small result set.
+    # Update LIMIT to change how many briefs are generated per pipeline run.
+    - query_top_vendors:
+        call: googleapis.bigquery.v2.jobs.query
+        args:
+          projectId: "agentic-platforms-sandbox"
+          body:
+            query: >
+              SELECT vendor_number
+              FROM `agentic-platforms-sandbox.fraud.vendor_scores`
+              ORDER BY anomaly_score DESC
+              LIMIT 10
+            useLegacySql: false
+            location: "australia-southeast1"
+            timeoutMs: 60000
+        result: vendors_result
+
+    # Step 3b: Extract vendor_number strings from BQ row format.
+    # BQ returns rows as [{f: [{v: "VEN001"}]}, ...] — map to a plain list.
+    # Guard: BQ omits the "rows" key entirely when the query returns no results.
+    - extract_vendor_ids:
+        assign:
+          - vendor_ids: []
+    - check_vendors_exist:
+        switch:
+          - condition: ${not("rows" in vendors_result)}
+            next: return_results
+    - build_vendor_list:
+        for:
+          value: row
+          in: ${vendors_result.rows}
+          steps:
+            - append_vendor:
+                assign:
+                  - vendor_ids: ${list.concat(vendor_ids, [row.f[0].v])}
+
+    # Step 4: Fan out brief generation. One Cloud Run call per vendor, in parallel.
     - generate_briefs_parallel:
         parallel:
           for:
             value: vendor_id
-            in: ["test-vendor-001", "test-vendor-002", "test-vendor-003"]
+            in: ${vendor_ids}
             steps:
               - call_brief_service:
                   call: http.post
@@ -59,8 +95,9 @@ main:
                       vendor_id: ${vendor_id}
                   result: brief_response
 
-    # Step 4: Return summary
+    # Step 5: Return summary
     - return_results:
         return:
           bq_status: ${bq_job_status.jobComplete}
           brief_status: "parallel fan-out complete"
+          vendors_briefed: ${vendor_ids}

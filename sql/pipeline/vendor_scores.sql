@@ -238,15 +238,15 @@ vendor_anomaly AS (
 -- ─────────────────────────────────────────────────────────────────────
 SELECT
   -- Anomaly scores rolled up from transaction_scores
-  va.anomaly_rate                                             AS anomaly_score,
-  ROW_NUMBER() OVER (ORDER BY va.anomaly_rate DESC)           AS anomaly_rank,
-  va.anomaly_score_max,
-  va.anomaly_score_mean,
-  va.anomaly_txn_count,
-  va.scored_txn_count,
-  va.top_features,
-  va.model_version,
-  va.scored_at,
+  van.anomaly_rate                                            AS anomaly_score,
+  ROW_NUMBER() OVER (ORDER BY van.anomaly_rate DESC)          AS anomaly_rank,
+  van.anomaly_score_max,
+  van.anomaly_score_mean,
+  van.anomaly_txn_count,
+  van.scored_txn_count,
+  van.top_features,
+  van.model_version,
+  van.scored_at,
 
   --  All vendor_features columns (raw features + peer comparisons)
   vf.*,
@@ -284,7 +284,7 @@ SELECT
   tt.top_transactions
 
 FROM `${GCP_PROJECT_ID}.${BQ_DATASET}.vendor_features` vf
-JOIN vendor_anomaly va
+JOIN vendor_anomaly van
   USING (vendor_number)
 LEFT JOIN va
   USING (vendor_number)

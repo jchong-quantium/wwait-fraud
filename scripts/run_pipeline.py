@@ -47,6 +47,7 @@ load_dotenv()
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BQ_DATASET = os.environ.get("BQ_DATASET")
 CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL")
+BRIEF_TOP_N = int(os.environ.get("BRIEF_TOP_N") or "10")
 
 if not GCP_PROJECT_ID:
     sys.exit("ERROR: GCP_PROJECT_ID must be set in .env")
@@ -76,6 +77,7 @@ SQL_FILES_PRE_SCORER = [
     "employee_attributes.sql",
     "base_transaction.sql",
     "vendor_features.sql",
+    "model_input.sql",         # pre-engineered feature matrix for IsoForest
     "transaction_scores.sql",  # schema stub — populated by scorer
 ]
 
@@ -247,15 +249,25 @@ def main() -> None:
         logger.info("=" * 60)
         return
 
-    # Trigger Cloud Run brief generation
-    # TODO: replace test vendor with loop over case_brief_inputs table rows
-    logger.info("Triggering brief generation service...")
-    try:
-        result = trigger_brief_service(vendor_id="test-vendor-001")
-        logger.info("Response: %s", result)
-    except requests.RequestException as e:
-        logger.error("Cloud Run error: %s", e)
-        sys.exit(1)
+    # Query vendor_scores for top vendors by anomaly score.
+    # top_n is an internal int constant — parameterised for consistency (CWE-89).
+    logger.info("Querying top %d vendors by anomaly score ...", BRIEF_TOP_N)
+    sql = f"SELECT vendor_number FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.vendor_scores` ORDER BY anomaly_score DESC LIMIT @top_n"
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("top_n", "INT64", BRIEF_TOP_N)]
+    )
+    top_vendors = [row["vendor_number"] for row in client.query(sql, job_config=job_config).result()]
+    logger.info("Vendors to brief: %s", top_vendors)
+
+    # Trigger Cloud Run brief generation for each vendor
+    for vendor_id in top_vendors:
+        logger.info("Triggering brief generation for vendor %s ...", vendor_id)
+        try:
+            result = trigger_brief_service(vendor_id=vendor_id)
+            logger.info("  Response: %s", result)
+        except requests.RequestException as e:
+            logger.error("  Cloud Run error for %s: %s", vendor_id, e)
+            sys.exit(1)
 
     logger.info("=" * 60)
     logger.info("Pipeline complete")
