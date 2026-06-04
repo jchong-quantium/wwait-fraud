@@ -42,7 +42,7 @@ def upload_html_to_gcs(html: str, vendor_number: str, timestamp: str) -> str:
 
     gcs_client = storage.Client(project=GCP_PROJECT_ID)
     bucket = gcs_client.bucket(GCS_BUCKET)
-    blob_name = f"briefs/{vendor_number}/case_brief_{vendor_number}_{timestamp}.html"
+    blob_name = f"briefs/{timestamp}/case_brief_{vendor_number}.html"
     bucket.blob(blob_name).upload_from_string(
         html, content_type="text/html; charset=utf-8"
     )
@@ -86,7 +86,7 @@ def generate():
         # Step 2: send the JSON to Gemini on Vertex AI and get back HTML
         html = generate_case_brief_html(brief)
 
-        # Step 3: upload HTML to Cloud Storage under briefs/<vendor_id>/
+        # Step 3: upload HTML to Cloud Storage under briefs/<timestamp>/
         ts = now.strftime("%Y%m%dT%H%M%S")
         gcs_uri = upload_html_to_gcs(html, vendor_id, ts)
 

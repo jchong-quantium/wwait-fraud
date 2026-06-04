@@ -3,14 +3,17 @@ run_pipeline.py — Local pipeline runner using personal ADC credentials.
 
 Bridge solution while the Workflows service account is awaiting access to
 enterprise source datasets. Uses your personal Google credentials (via ADC)
-to run each SQL pipeline step against BigQuery, then triggers the Cloud Run
-brief generation service.
+to run each SQL pipeline step against BigQuery, then generates case briefs
+by calling builder.py directly and uploading results to GCS.
+
+Note: brief generation bypasses Cloud Run (main.py) due to OIDC auth constraints
+with personal ADC credentials. 
 
 Prerequisites:
     gcloud auth application-default login   # authenticate once
 
 Usage:
-    python3 scripts/run_pipeline.py            # setup views + pipeline SQL + brief trigger
+    python3 scripts/run_pipeline.py            # setup views + pipeline SQL + briefs
     python3 scripts/run_pipeline.py --sql-only # setup views + pipeline SQL only
 
 Notes:
@@ -26,13 +29,16 @@ import logging
 import os
 import pathlib
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-import requests  # type: ignore
 from dotenv import load_dotenv  # type: ignore
-from google.auth.transport.requests import Request  # type: ignore
-from google.cloud import bigquery
+from google.cloud import bigquery, storage
 from google.cloud.exceptions import GoogleCloudError  # type: ignore
-from google.oauth2 import id_token  # type: ignore
+
+# Add brief/ to path so builder can be imported directly for local runs
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "brief"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,14 +52,20 @@ load_dotenv()
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 BQ_DATASET = os.environ.get("BQ_DATASET")
-CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL")
-BRIEF_TOP_N = int(os.environ.get("BRIEF_TOP_N") or "10")
+GCS_BUCKET = os.environ.get("GCS_BUCKET")
+BRIEF_VENDOR_LIMIT = int(os.environ.get("BRIEF_VENDOR_LIMIT") or "10")
+BRIEF_WORKERS = int(os.environ.get("BRIEF_WORKERS") or "3")
+
+MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 
 if not GCP_PROJECT_ID:
     sys.exit("ERROR: GCP_PROJECT_ID must be set in .env")
 
 if not BQ_DATASET:
     sys.exit("ERROR: BQ_DATASET must be set in .env")
+
+if not GCS_BUCKET:
+    sys.exit("ERROR: GCS_BUCKET must be set in .env")
 
 # SQL file lists — filenames only, never user-supplied, to prevent path traversal.
 # Paths are constructed at runtime from known directories (SQL_DIR / SETUP_DIR).
@@ -161,34 +173,22 @@ def _run_scorer() -> None:
     logger.info("Transaction scorer complete")
 
 
-def trigger_brief_service(vendor_id: str) -> dict:
-    """
-    Call the Cloud Run brief generation service with OIDC authentication.
-    Uses ADC to fetch an identity token — no credentials hardcoded.
-    """
-    if not CLOUD_RUN_URL:
-        logger.warning("CLOUD_RUN_URL not set in .env — skipping brief generation")
-        return {}
+def _process_vendor(
+    vendor_id: str,
+    client: bigquery.Client,
+    bucket: storage.Bucket,
+    run_ts: str,
+) -> str:
+    """Build and upload a case brief for a single vendor."""
+    from builder import build_case_brief, generate_case_brief_html  # type: ignore
 
-    generate_url = f"{CLOUD_RUN_URL.rstrip('/')}/generate"
-
-    # Fetch OIDC identity token using ADC — required for private Cloud Run services
-    auth_req = Request()
-    token = id_token.fetch_id_token(auth_req, CLOUD_RUN_URL)
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-    response = requests.post(
-        generate_url,
-        headers=headers,
-        json={"vendor_id": vendor_id},
-        timeout=300,  # 5 min timeout — brief generation may take time
-    )
-    response.raise_for_status()
-    return response.json()
+    logger.info("Generating brief: %s", vendor_id)
+    brief = build_case_brief(vendor_id, client=client)
+    brief["generated_at"] = datetime.now(tz=MELBOURNE_TZ).strftime("%-d %B %Y")
+    html = generate_case_brief_html(brief)
+    blob_name = f"briefs/{run_ts}/case_brief_{vendor_id}.html"
+    bucket.blob(blob_name).upload_from_string(html, content_type="text/html; charset=utf-8")
+    return blob_name
 
 
 def _run_files(
@@ -218,7 +218,7 @@ def main() -> None:
     parser.add_argument(
         "--sql-only",
         action="store_true",
-        help="Skip the Cloud Run brief generation trigger after SQL execution.",
+        help="Skip brief generation after SQL execution.",
     )
     args = parser.parse_args()
 
@@ -249,25 +249,35 @@ def main() -> None:
         logger.info("=" * 60)
         return
 
-    # Query vendor_scores for top vendors by anomaly score.
-    # top_n is an internal int constant — parameterised for consistency (CWE-89).
-    logger.info("Querying top %d vendors by anomaly score ...", BRIEF_TOP_N)
-    sql = f"SELECT vendor_number FROM `{GCP_PROJECT_ID}.{BQ_DATASET}.vendor_scores` ORDER BY anomaly_score DESC LIMIT @top_n"
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("top_n", "INT64", BRIEF_TOP_N)]
-    )
-    top_vendors = [row["vendor_number"] for row in client.query(sql, job_config=job_config).result()]
-    logger.info("Vendors to brief: %s", top_vendors)
+    # Brief generation — calls builder directly; see module docstring for why
+    from builder import select_top_vendors  # type: ignore
 
-    # Trigger Cloud Run brief generation for each vendor
-    for vendor_id in top_vendors:
-        logger.info("Triggering brief generation for vendor %s ...", vendor_id)
-        try:
-            result = trigger_brief_service(vendor_id=vendor_id)
-            logger.info("  Response: %s", result)
-        except requests.RequestException as e:
-            logger.error("  Cloud Run error for %s: %s", vendor_id, e)
-            sys.exit(1)
+    logger.info("Fetching top %d vendors by anomaly score...", BRIEF_VENDOR_LIMIT)
+    vendors = select_top_vendors(BRIEF_VENDOR_LIMIT, client)
+
+    if not vendors:
+        logger.warning("No vendors found in vendor_scores — skipping brief generation")
+    else:
+        gcs_client = storage.Client(project=GCP_PROJECT_ID)
+        bucket = gcs_client.bucket(GCS_BUCKET)
+        run_ts = datetime.now(tz=MELBOURNE_TZ).strftime("%Y%m%dT%H%M%S")
+
+        failed = 0
+        with ThreadPoolExecutor(max_workers=BRIEF_WORKERS) as executor:
+            futures = {
+                executor.submit(_process_vendor, v, client, bucket, run_ts): v
+                for v in vendors
+            }
+            for future in as_completed(futures):
+                vendor_id = futures[future]
+                try:
+                    blob_name = future.result()
+                    logger.info("  Uploaded: gs://%s/%s", GCS_BUCKET, blob_name)
+                except Exception as e:
+                    logger.error("  Failed for %s: %s", vendor_id, e)
+                    failed += 1
+        if failed:
+            logger.warning("%d brief(s) failed", failed)
 
     logger.info("=" * 60)
     logger.info("Pipeline complete")

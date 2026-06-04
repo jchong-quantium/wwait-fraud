@@ -94,6 +94,12 @@ body {
 .section-body p {
   margin-bottom: 6px;
 }
+.section-desc {
+  font-size: 10px;
+  color: #999;
+  font-style: italic;
+  margin-bottom: 8px;
+}
 
 /* Tag labels */
 .tag {
@@ -106,6 +112,9 @@ body {
 }
 .tag-llm  { background: #e8f0e8; color: #1a3a1a; border: 1px solid #b0c8b0; }
 .tag-code { background: #dae8fc; color: #1a3a5c; border: 1px solid #b0c8e8; }
+.tag-suspicious  { background: #fde8e8; color: #5c1a1a; border: 1px solid #e8b0b0; }
+.tag-cleared     { background: #e8f5e8; color: #1a5c1a; border: 1px solid #a0c8a0; }
+.tag-data-issue  { background: #fef6e4; color: #5c4a1a; border: 1px solid #e8d8a0; }
 
 /* Tables */
 table {
@@ -151,6 +160,11 @@ tr:hover { background: #fafafa; }
   letter-spacing: 0.5px;
   color: #888;
   margin-bottom: 2px;
+}
+.metric-sublabel {
+  font-size: 8px;
+  color: #bbb;
+  margin-bottom: 4px;
 }
 .metric-value {
   font-size: 14px;
@@ -234,99 +248,114 @@ tr:hover { background: #fafafa; }
   <div class="section-header">
     <span class="section-num">1</span> Why This Vendor <span class="tag tag-llm">LLM</span>
   </div>
+  <p class="section-desc">A summary of the top signals that triggered this vendor's inclusion. Read this first to understand whether the risk warrants further investigation.</p>
   <div class="section-body">
     <p>[WHY_THIS_VENDOR]</p>
   </div>
 </div>
 
-<!-- SECTION 2: EXPOSURE -->
+<!-- SECTION 2: RECOMMENDATION -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">2</span> Exposure <span class="tag tag-llm">LLM</span>
+    <span class="section-num">2</span> Recommendation <span class="tag tag-llm">LLM</span>
   </div>
+  <p class="section-desc">The single most important action to take first. Start here if you are picking up this case.</p>
+  <div class="section-body">
+    <p>[RECOMMENDATION]</p>
+  </div>
+</div>
+
+<!-- SECTION 3: RISK FLAGS -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">3</span> Risk Flags <span class="tag tag-code">Code</span>
+  </div>
+  <p class="section-desc">Automated checks run against this vendor. "Suspicious Activity" means the check ran and raised a flag. "Cleared" means the check ran and found nothing. "Potential Data Issue" means the check could not be performed — the underlying data is not yet available.</p>
+  <table>
+    <tr><th>Flag</th><th>Type</th><th>Status</th><th>Detail</th></tr>
+    [FLAG_ROWS]
+  </table>
+</div>
+
+<!-- SECTION 4: EXPOSURE -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">4</span> Exposure <span class="tag tag-llm">LLM</span>
+  </div>
+  <p class="section-desc">The financial scale of this vendor relationship over the past 12 months. Use this to gauge the potential impact if fraud is confirmed.</p>
   <div class="section-body">
     <p>[EXPOSURE_NARRATIVE]</p>
   </div>
   <div class="exposure-grid">
     <div class="metric-card">
       <div class="metric-label">PO Spend (12m)</div>
+      <div class="metric-sublabel">Orders raised</div>
       <div class="metric-value">$[PO_SPEND_12M]</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Invoice Spend (12m)</div>
+      <div class="metric-sublabel">Invoiced excl. GST</div>
       <div class="metric-value">$[INVOICE_SPEND_12M]</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Payments (12m)</div>
+      <div class="metric-sublabel">Actual payments made</div>
       <div class="metric-value">$[PAYMENT_AMOUNT_12M]</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Unrealised Fraud</div>
+      <div class="metric-sublabel">Not yet available</div>
       <div class="metric-value unavailable">[UNREALISED_FRAUD]</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Potential Fraud</div>
+      <div class="metric-sublabel">Not yet available</div>
       <div class="metric-value unavailable">[POTENTIAL_FRAUD]</div>
     </div>
   </div>
 </div>
 
-<!-- SECTION 3: RECOMMENDATION -->
+<!-- SECTION 5: WHAT WAS DEPRIORITISED -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">3</span> Recommendation <span class="tag tag-llm">LLM</span>
+    <span class="section-num">5</span> What Was Deprioritised <span class="tag tag-llm">LLM</span>
   </div>
-  <div class="section-body">
-    <p>[RECOMMENDATION]</p>
-  </div>
-</div>
-
-<!-- SECTION 4: WHAT WAS DEPRIORITISED -->
-<div class="section">
-  <div class="section-header">
-    <span class="section-num">4</span> What Was Deprioritised <span class="tag tag-llm">LLM</span>
-  </div>
+  <p class="section-desc">Signals that were reviewed but set aside. This is not a clean bill of health — it means these signals were considered less material given the overall risk picture.</p>
   <table>
     <tr><th>Signal</th><th>Reason Deprioritised</th></tr>
     [DEPRIORITISED_ROWS]
   </table>
 </div>
 
-<!-- SECTION 5: SUPPORTING DATA -->
+<!-- SECTION 6: SUPPORTING DATA -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">5</span> Supporting Data <span class="tag tag-code">Code</span>
+    <span class="section-num">6</span> Supporting Data <span class="tag tag-code">Code</span>
   </div>
+  <p class="section-desc">The underlying data behind this brief. Use this to verify the AI's reasoning, dig into specific transactions, or identify additional lines of enquiry.</p>
 
-  <!-- 5a: Anomaly Metrics -->
+  <!-- 6a: Anomaly Metrics -->
   <p style="font-size:11px;font-weight:700;margin:10px 0 4px;color:#333;">Anomaly Metrics — Top Deviations from Peer Group</p>
   <table>
     <tr><th>Metric</th><th>Vendor</th><th>Peer Median</th><th>Percentile</th></tr>
     [ANOMALY_METRIC_ROWS]
   </table>
 
-  <!-- 5b: Binary Flags -->
-  <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Binary Flags</p>
-  <table>
-    <tr><th>Flag</th><th>Status</th><th>Detail</th></tr>
-    [FLAG_ROWS]
-  </table>
-
-  <!-- 5c: Approval Concentration -->
+  <!-- 6b: Approval Concentration -->
   <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Approval Concentration</p>
   <table id="tbl-approval">
     <tr><th>Approver</th><th>Share of Approvals</th></tr>
     [APPROVAL_CONCENTRATION_ROWS]
   </table>
 
-  <!-- 5d: Top Transactions -->
+  <!-- 6c: Top Transactions -->
   <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Top Transactions ([TOTAL_TXN_COUNT] total)</p>
   <table id="tbl-transactions">
     <tr><th>Date</th><th>Amount</th><th>Approver</th><th>Requestor</th><th>Status</th><th>Terms</th></tr>
     [TRANSACTION_ROWS]
   </table>
 
-  <!-- 5e: Related Vendors -->
+  <!-- 6d: Related Vendors -->
   <p style="font-size:11px;font-weight:700;margin:14px 0 4px;color:#333;">Related Vendors (Same Supplier)</p>
   <table>
     <tr><th>Vendor Number</th><th>Vendor Name</th><th>Anomaly Score</th><th>12m Spend</th></tr>
